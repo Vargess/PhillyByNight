@@ -3,6 +3,9 @@
 local/
 pbn-map*.json
 
+# One-off utility for upgrading a pre-3.0.0 export. Kept local rather than shipped.
+repair-map.py
+
 # map-viewer.html plus five lines of dev-only loading. Kept out of the repo so the
 # two copies cannot drift; fold the loader into map-viewer.html behind a query
 # parameter if it is ever needed by more than one person.
