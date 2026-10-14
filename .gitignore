@@ -1,0 +1,16 @@
+# Personal map data — your own exploration progress, not part of the project.
+# Exported from the userscript with the ⤓ button; re-import with ⤒.
+local/
+pbn-map*.json
+
+# map-viewer.html plus five lines of dev-only loading. Kept out of the repo so the
+# two copies cannot drift; fold the loader into map-viewer.html behind a query
+# parameter if it is ever needed by more than one person.
+map-viewer-debug.html
+
+# Editor / tooling state
+.claude/
+.vscode/
+*.swp
+Thumbs.db
+desktop.ini

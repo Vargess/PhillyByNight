@@ -1,0 +1,1914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PbN Map Viewer</title>
+<style>
+  /* -------------------------------------------------------------- palette */
+  :root {
+    --bg: #14141a;
+    --bg-2: #1c1c24;
+    --bg-3: #25252e;
+    --bg-hover: #2e2e3a;
+    --border: #3a3a44;
+    --border-2: #4a4a55;
+    --text: #e6e6ec;
+    --text-dim: #999aa3;
+    --text-faint: #6a6b75;
+    --accent: #4ecdc4;
+    --accent-dim: #2a7c76;
+    --warn: #e67e22;
+    --danger: #e74c3c;
+    --ok: #2ecc71;
+    --grid-line: #2a2a32;
+    --selected: #ffd700;
+    --matched: #f1c40f;
+    --hidden: #555;
+  }
+  /* -------------------------------------------------------------- base */
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, select, input, textarea {
+    font: inherit; color: inherit; background: transparent;
+    border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px;
+  }
+  button { cursor: pointer; background: var(--bg-3); }
+  button:hover { background: var(--bg-hover); border-color: var(--border-2); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  input[type="search"], input[type="text"] { width: 100%; }
+  input:focus, select:focus, button:focus { outline: 1px solid var(--accent-dim); outline-offset: 0; }
+  /* -------------------------------------------------------------- layout */
+  #app { display: flex; flex-direction: column; height: 100%; }
+  header {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    background: var(--bg-2); border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  header h1 { margin: 0; font-size: 14px; font-weight: 600; color: var(--accent); }
+  header .file-info { font-size: 11px; color: var(--text-dim); margin-left: 8px; }
+  header .spacer { flex: 1; }
+  header .ctrl-group { display: flex; gap: 6px; align-items: center; }
+  header label { font-size: 11px; color: var(--text-dim); }
+  main { display: flex; flex: 1; min-height: 0; }
+  aside#sidebar {
+    width: 290px; flex-shrink: 0; background: var(--bg-2);
+    border-right: 1px solid var(--border); overflow-y: auto;
+    display: flex; flex-direction: column;
+  }
+  aside#details {
+    width: 320px; flex-shrink: 0; background: var(--bg-2);
+    border-left: 1px solid var(--border); overflow-y: auto;
+    transition: width 0.15s;
+  }
+  aside#details.collapsed { width: 0; padding: 0; border-left: none; }
+  section#canvas {
+    flex: 1; min-width: 0; position: relative; background: var(--bg);
+    overflow: hidden;
+  }
+  /* -------------------------------------------------------------- sidebar */
+  .sidebar-section { border-bottom: 1px solid var(--border); padding: 10px 12px; }
+  .sidebar-section h2 {
+    margin: 0 0 6px; font-size: 11px; font-weight: 600;
+    color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .stats { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; }
+  .stats .label { color: var(--text-dim); }
+  .stats .value { font-variant-numeric: tabular-nums; }
+  .filter-list { display: flex; flex-direction: column; gap: 3px; max-height: 180px; overflow-y: auto; }
+  .filter-list label {
+    display: flex; align-items: center; gap: 6px;
+    padding: 2px 4px; border-radius: 3px; cursor: pointer; font-size: 12px;
+  }
+  .filter-list label:hover { background: var(--bg-hover); }
+  .filter-list .swatch {
+    display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    flex-shrink: 0; border: 1px solid rgba(255,255,255,0.15);
+  }
+  .filter-list .count {
+    margin-left: auto; font-size: 11px; color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .filter-list input[type="checkbox"] { margin: 0; accent-color: var(--accent); }
+  .search-row { display: flex; gap: 6px; align-items: center; }
+  .room-list {
+    max-height: 280px; overflow-y: auto; border: 1px solid var(--border);
+    border-radius: 4px; background: var(--bg);
+  }
+  .room-list .item {
+    padding: 4px 8px; cursor: pointer; border-bottom: 1px solid var(--border);
+    font-size: 12px; display: flex; gap: 6px; align-items: center;
+  }
+  .room-list .item:hover { background: var(--bg-hover); }
+  .room-list .item.selected { background: var(--bg-3); border-left: 2px solid var(--selected); padding-left: 6px; }
+  .room-list .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .room-list .item .key { color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .room-list .empty { padding: 12px; text-align: center; color: var(--text-faint); font-size: 12px; }
+  /* -------------------------------------------------------------- canvas */
+  #canvas svg { display: block; width: 100%; height: 100%; cursor: grab; }
+  #canvas svg.panning { cursor: grabbing; }
+  #canvas .zoom-hint {
+    position: absolute; bottom: 8px; left: 8px;
+    background: rgba(20,20,26,0.8); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 8px; font-size: 11px; color: var(--text-dim);
+    pointer-events: none;
+  }
+  #canvas .legend {
+    position: absolute; bottom: 8px; right: 8px;
+    background: rgba(20,20,26,0.85); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 10px; font-size: 11px;
+    max-width: 240px;
+  }
+  #canvas .legend h3 {
+    margin: 0 0 4px; font-size: 11px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  #canvas .legend .row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+  #canvas .legend .swatch {
+    display: inline-block; width: 12px; height: 12px; border-radius: 2px;
+    flex-shrink: 0;
+  }
+  #canvas .empty-canvas {
+    position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; flex-direction: column; gap: 12px;
+    pointer-events: none; color: var(--text-dim);
+  }
+  /* Floating controls anchored to the map canvas itself (not the header). */
+  .canvas-control {
+    position: absolute; top: 8px; right: 8px;
+    background: rgba(20,20,26,0.92);
+    border: 1px solid var(--border-2); border-radius: 4px;
+    padding: 6px 12px;
+    font: 16px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--text); cursor: pointer;
+    pointer-events: auto;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    z-index: 10;
+  }
+  .canvas-control:hover { background: rgba(40,40,46,0.95); border-color: var(--accent); }
+  .canvas-control:active { transform: translateY(1px); }
+  #canvas .empty-canvas .big {
+    font-size: 16px; color: var(--text); pointer-events: auto;
+  }
+  #canvas.dragging-over::after {
+    content: "Drop JSON to load";
+    position: absolute; inset: 12px;
+    background: rgba(78, 205, 196, 0.1);
+    border: 2px dashed var(--accent);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; color: var(--accent);
+    pointer-events: none;
+  }
+  /* SVG room styling */
+  .room { cursor: pointer; }
+  .room.hidden { display: none; }
+  .room rect { stroke-width: 1.5; transition: stroke 0.1s, stroke-width 0.1s; }
+  .room.selected rect { stroke: var(--selected); stroke-width: 2.5; }
+  .room.matched rect { stroke: var(--matched); stroke-width: 2; }
+  .room:hover rect { stroke: var(--accent); stroke-width: 2; }
+  .room.placement-reckoned rect { stroke-dasharray: 3 2; }
+  .room.placement-null rect { stroke-dasharray: 1 2; opacity: 0.5; }
+  /* Rooms with no exit arrow drawn on the map (sewer rooms with only passage
+     exits, unresolved targets, etc.) — neutral gray fill, dashed outline. */
+  .room.no-exits rect {
+    fill: #4a4a55;
+    stroke: rgba(255, 255, 255, 0.35);
+    stroke-dasharray: 3 2;
+  }
+  .room.no-exits.selected rect { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 3 2; }
+  .room.no-exits.bg-room rect { opacity: 0.85; }   /* keep faded relative to current floor */
+  .room text { font-size: 9px; fill: rgba(255,255,255,0.55); pointer-events: none; }
+  .exit { stroke: #4a4a55; stroke-width: 1; fill: none; }
+  .exit.locked { stroke: var(--danger); }
+  .exit.broken { stroke: var(--warn); stroke-dasharray: 2 2; }
+  .exit.hidden { display: none; }
+  /* Directional arrows that mark each connection. The triangle's tip points
+     from the source toward the target, so when two rooms share an edge each
+     side's arrow shows which way the connection flows. */
+  .exit-connection {
+    fill: #ffd700;
+    stroke: #1a1a20;
+    stroke-width: 0.4;
+    pointer-events: none;
+    filter: drop-shadow(0 0 3px rgba(255, 215, 0, 0.45));
+  }
+  .exit-connection.vertical { fill: #ffb700; }
+  .exit-connection.bg-connection { filter: none; stroke: rgba(0,0,0,0.6); stroke-width: 0.3; }
+  .floor-label { font-size: 14px; fill: var(--text-faint); font-weight: 600; }
+  /* .floor-label kept around in case future renderers want to draw it on the
+     canvas again; currently the floor name lives in the HUD instead. */
+  /* -------------------------------------------------------------- details */
+  .details-empty {
+    padding: 20px; color: var(--text-faint); text-align: center; font-size: 12px;
+  }
+  .details-empty .hint { margin-top: 8px; font-size: 11px; }
+  .details-content { padding: 12px; }
+  .details-content h2 { margin: 0 0 4px; font-size: 14px; color: var(--accent); }
+  .details-content .key-line {
+    font-size: 11px; color: var(--text-faint); margin-bottom: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+  .details-content h3 {
+    margin: 12px 0 4px; font-size: 11px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .details-content table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .details-content td { padding: 3px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .details-content td:first-child { color: var(--text-dim); width: 40%; }
+  .details-content td code {
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px;
+    background: var(--bg-3); padding: 1px 4px; border-radius: 3px;
+  }
+  .tag-swatch {
+    display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    margin-right: 6px; vertical-align: middle;
+    border: 1px solid rgba(255,255,255,0.18);
+  }
+  .details-content .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; background: var(--bg-3); border: 1px solid var(--border);
+  }
+  .details-content .badge.grid { background: var(--accent-dim); border-color: var(--accent); }
+  .details-content .badge.anchored { background: #2a5a8a; border-color: #4a8aca; }
+  .details-content .badge.reckoned { background: #8a6a2a; border-color: #caa84a; }
+  .details-content .exits-list { font-size: 12px; }
+  .details-content .exits-list .exit-row {
+    padding: 4px 6px; border-bottom: 1px solid var(--border);
+    cursor: pointer; border-radius: 3px;
+  }
+  .details-content .exits-list .exit-row:hover { background: var(--bg-hover); }
+  .details-content .exits-list .exit-row .dir {
+    display: inline-block; min-width: 70px; color: var(--text-dim);
+  }
+  .details-content .exits-list .exit-row .name { color: var(--text); }
+  .details-content .exits-list .exit-row .flags { color: var(--text-faint); font-size: 11px; }
+  /* -------------------------------------------------------------- transit */
+  .transit-lines { display: flex; flex-direction: column; gap: 4px; }
+  .transit-line { border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .transit-line-header {
+    padding: 4px 8px; background: var(--bg-3); cursor: pointer;
+    display: flex; align-items: center; gap: 6px; font-size: 12px;
+  }
+  .transit-line-header:hover { background: var(--bg-hover); }
+  .transit-line-header .line-name { flex: 1; }
+  .transit-line-header .count { color: var(--text-faint); font-size: 11px; }
+  .transit-line-header .swatch {
+    display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+  }
+  .transit-line-edges { padding: 4px 8px; font-size: 11px; color: var(--text-dim); }
+  .transit-line-edges .edge { padding: 2px 0; }
+  /* tabs in sidebar */
+  .tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .tabs button {
+    flex: 1; border: none; border-bottom: 2px solid transparent;
+    border-radius: 0; padding: 8px; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-dim);
+  }
+  .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-2); }
+  /* current room marker (the one you're "standing in") */
+  .room.current rect {
+    stroke: #ffd700;
+    stroke-width: 3;
+    filter: drop-shadow(0 0 6px rgba(255, 215, 0, 0.55));
+  }
+  .room.current::after { content: ""; }    /* placeholder for future marker overlay */
+  .room.current .marker {
+    fill: #ffd700;
+    stroke: #000;
+    stroke-width: 0.5;
+    pointer-events: none;
+  }
+  /* background-floor rooms: faded, no clicks */
+  .room.bg-room { cursor: default; pointer-events: none; }
+  .room.bg-room rect { opacity: var(--bg-opacity, 0.15); }
+  .room.bg-room.placement-reckoned rect { opacity: calc(var(--bg-opacity, 0.15) * 0.9); }
+  /* background-floor exits: dimmer, also non-interactive */
+  .exit.bg-exit { pointer-events: none; }
+  .exit.bg-exit.locked { opacity: 0.3; }
+  .exit.bg-exit.broken { opacity: 0.3; }
+  /* a brief red flash when a move is blocked */
+  .room.current.blocked rect {
+    stroke: #e74c3c;
+    animation: blocked-shake 0.32s ease-in-out;
+  }
+  @keyframes blocked-shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-2px); }
+    40% { transform: translateX(2px); }
+    60% { transform: translateX(-1px); }
+    80% { transform: translateX(1px); }
+  }
+  /* HUD: shows current room + floor + nav hint */
+  #navHud {
+    position: absolute; top: 8px; left: 8px;
+    background: rgba(20,20,26,0.92); border: 1px solid var(--border-2);
+    border-radius: 4px; padding: 10px 14px;
+    font-size: 15px; color: var(--text);
+    pointer-events: none; min-width: 280px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
+  #navHud .current-floor {
+    font-size: 12px; color: var(--accent); font-weight: 600;
+    text-transform: uppercase; letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+  #navHud .current-name {
+    color: #ffd700; font-weight: 600; font-size: 18px;
+    text-shadow: 0 0 6px rgba(255, 215, 0, 0.4);
+  }
+  #navHud .current-pos {
+    font-variant-numeric: tabular-nums; color: var(--text);
+    font-size: 13px; margin-top: 2px;
+  }
+  #navHud .hint {
+    margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--text-dim);
+  }
+  #navHud .hint kbd {
+    display: inline-block; padding: 1px 5px; margin: 0 1px;
+    border: 1px solid var(--border-2); border-radius: 3px;
+    background: var(--bg-3); color: var(--text); font-size: 11px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  /* bg layer indicator (small badge showing what's underneath) */
+  #navHud .bg-summary {
+    margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--text-dim);
+  }
+  #navHud .bg-summary .dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    margin-right: 4px; vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>PbN Map Viewer</h1>
+    <span class="file-info" id="fileInfo">drop or load a JSON to begin</span>
+    <div class="spacer"></div>
+    <div class="ctrl-group">
+      <label for="floorSel">Floor:</label>
+      <select id="floorSel" disabled><option>—</option></select>
+      <label for="colorBy">Color by:</label>
+      <select id="colorBy">
+        <option value="keyFeatures">Key features</option>
+        <option value="primaryTag">Primary tag</option>
+        <option value="exposureTier">Exposure tier</option>
+        <option value="placement">Placement</option>
+        <option value="haven">Haven status</option>
+        <option value="neighborhood">Neighborhood</option>
+      </select>
+      <button id="fitBtn" title="Fit all visible rooms in view (F)">⛶ Fit</button>
+      <button id="centerBtn" title="Reset zoom and pan (R)">⌖ Reset</button>
+      <button id="toggleDetailsBtn" title="Toggle details panel">»</button>
+      <button id="loadBtn" title="Load JSON file">📂 Load</button>
+      <input type="file" id="fileInput" accept="application/json" style="display:none">
+    </div>
+  </header>
+  <main>
+    <aside id="sidebar">
+      <div class="tabs">
+        <button class="tab active" data-tab="rooms">Rooms</button>
+        <button class="tab" data-tab="transit">Transit</button>
+      </div>
+      <div class="tab-panel" data-tab-panel="rooms">
+        <div class="sidebar-section">
+          <h2>Search</h2>
+          <input type="search" id="searchInput" placeholder="name, id, key, tag, area…">
+        </div>
+        <div class="sidebar-section">
+          <h2>Filters</h2>
+          <div id="filters"></div>
+        </div>
+        <div class="sidebar-section">
+          <h2>Statistics</h2>
+          <div class="stats" id="stats"></div>
+        </div>
+        <div class="sidebar-section" style="flex:1; display:flex; flex-direction:column; min-height:0;">
+          <h2>Rooms on this floor <span id="roomListCount" style="float:right; font-weight:normal; color:var(--text-faint);"></span></h2>
+          <div class="room-list" id="roomList" style="flex:1;"></div>
+        </div>
+      </div>
+      <div class="tab-panel" data-tab-panel="transit" style="display:none;">
+        <div class="sidebar-section">
+          <h2>Transit lines</h2>
+          <div class="transit-lines" id="transitLines"></div>
+        </div>
+      </div>
+    </aside>
+    <section id="canvas">
+      <svg id="map" xmlns="http://www.w3.org/2000/svg">
+        <g id="viewport">
+          <!-- The mapper stores "north" as +y in data, but SVG's y axis
+               runs downward. This wrapper flips the world so +y renders UP,
+               matching the on-screen numpad/arrow convention. Text and the
+               current-room marker carry their own counter-flip so they read
+               right-side-up. -->
+          <g id="flippedWorld" transform="scale(1, -1)">
+            <g id="gridLayer"></g>
+            <g id="exitsLayer"></g>
+            <g id="roomsLayer"></g>
+          </g>
+        </g>
+      </svg>
+      <button id="centerOnRoomBtn" class="canvas-control" title="Center on the current room and reset zoom (C)">⌖</button>
+      <div id="navHud" style="display:none;">
+        <div class="current-floor" id="navCurrentFloor">—</div>
+        <div class="current-name" id="navCurrentName">—</div>
+        <div class="current-pos" id="navCurrentPos"></div>
+        <div class="bg-summary" id="navBgSummary"></div>
+        <div class="hint">numpad to move · <kbd>PgUp</kbd>/<kbd>PgDn</kbd> for floors · <kbd>F</kbd> fit · <kbd>C</kbd> center</div>
+      </div>
+      <div class="zoom-hint" id="zoomHint">scroll to zoom · drag to pan · click room to make it current</div>
+      <div class="legend" id="legend" style="display:none;"></div>
+    </section>
+    <aside id="details">
+      <div id="detailsBody">
+        <div class="details-empty">
+          Click a room to see its details.
+          <div class="hint">Drag/drop or load a JSON in the top bar to begin.</div>
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<script>
+'use strict';
+
+// ============================================================== constants
+const CELL = 22;                 // pixel size of each grid cell in the viewer
+const ROOM_PAD = 2;              // padding inside each cell
+const VEHICLE_Z_THRESHOLD = -50; // matches mapper; rooms at or below are transit
+
+// Compass direction vectors matching the mapper
+const COMPASS = {
+  north: [0, 1], south: [0, -1], east: [1, 0], west: [-1, 0],
+  northeast: [1, 1], northwest: [-1, 1], southeast: [1, -1], southwest: [-1, -1],
+  up: [0, 0], down: [0, 0]       // up/down change z, not drawn
+};
+
+// ---------- Focused "key features" coloring --------------------------
+// Most room tags are too superficial to justify their own color. The handful
+// of attributes that actually matter when skimming the map get highlighted;
+// everything else stays a muted neutral.
+function isTransitStation(r) {
+  if (r.isVehicle) return true;
+  const t = r.primaryTag || '';
+  if (/^(transit|station|train|subway|platform)$/i.test(t)) return true;
+  if (Array.isArray(r.features) && r.features.some((f) =>
+    /transit|station|train|subway|platform/i.test(f))) return true;
+  return false;
+}
+function hasVerticalExit(r) {
+  return Array.isArray(r.exits) && r.exits.some(
+    (e) => e.direction === 'up' || e.direction === 'down');
+}
+function hasLockableExit(r) {
+  return Array.isArray(r.exits) && r.exits.some(
+    (e) => e.locked || e.broken);
+}
+function hasResource(r) {
+  return Array.isArray(r.features) && r.features.some(
+    (f) => /resource|bench|craft|forge|workshop|loom|study|library/i.test(f));
+}
+// Priority-ordered features. The first match wins so the most important
+// attribute paints over the others (a transit station that's also a haven
+// still reads as a transit station).
+const FEATURE_PRIORITY = [
+  { test: isTransitStation,   key: 'transit',     label: 'Transit station',     color: '#ffd700' },
+  { test: (r) => r.isHaven,    key: 'haven',       label: 'Haven (claimed)',     color: '#d97000' },
+  { test: hasVerticalExit,     key: 'vertical',    label: 'Has up/down exit',    color: '#4ecdc4' },
+  { test: hasLockableExit,     key: 'lockable',    label: 'Has locked/broken door', color: '#3aaa3a' },
+  { test: hasResource,         key: 'resource',    label: 'Resource / crafting', color: '#e060a0' },
+  { test: (r) => r.havenClaimable, key: 'claimable', label: 'Claimable haven',     color: '#f0a060' }
+];
+const FEATURE_COLOR_DEFAULT = '#3a4a7a';
+function featureColor(r) {
+  for (const f of FEATURE_PRIORITY) if (f.test(r)) return f.color;
+  return FEATURE_COLOR_DEFAULT;
+}
+function featureLabel(r) {
+  for (const f of FEATURE_PRIORITY) if (f.test(r)) return f.label;
+  return 'Standard';
+}
+
+// Color palettes for each coloring scheme
+const COLOR_PALETTES = {
+  keyFeatures: {},     // populated dynamically by featureColor()
+  primaryTag: {
+    road: '#5a5a6a', street: '#6a6a7a', sewer: '#3a6a8a', steam_tunnel: '#8a6a3a',
+    transit: '#aa3a6a', haven: '#3a8a4a', indoor: '#4a4a5a', outdoor: '#7a7a8a',
+    other: '#666670'
+  },
+  exposureTier: {
+    public: '#3a8a4a', private: '#8a6a2a', underground: '#3a6a8a', other: '#666670'
+  },
+  placement: {
+    grid: '#4ecdc4', anchored: '#4a8aca', reckoned: '#caa84a', null: '#666670'
+  },
+  haven: {
+    isHaven: '#aa3aaa', claimable: '#aa8a3a', none: '#3a8a4a'
+  },
+  neighborhood: {} // generated dynamically
+};
+
+// ============================================================== state
+const state = {
+  raw: null,                    // loaded JSON bundle
+  rooms: [],                    // array of normalized room objects
+  byId: new Map(),              // id -> room
+  byKey: new Map(),             // key -> room
+  targetIdToCoord: new Map(),   // exit-target id -> "x,y,z" inferred from neighbour direction (null = conflicting)
+  unplaced: [],                 // rooms without a position
+  transit: {},                  // { lineName: [[a,b], ...] }
+  floorLabels: {},              // { z: label }
+  fileName: '',
+  filters: {
+    primaryTag: new Set(),
+    exposureTier: new Set(),
+    placement: new Set(),
+    neighborhood: new Set(),
+    havenOnly: false
+  },
+  search: '',
+  selectedKey: null,            // room whose details are shown on the right
+  currentRoomKey: null,         // the room the user is "standing in" for keyboard navigation
+  followCurrent: true,          // pan to keep the current room centred on move
+  colorBy: 'keyFeatures',
+  floor: null,                  // currently selected z
+  availableFloors: [],
+  view: { tx: 0, ty: 0, scale: 1 },
+  panZoomInstalled: false,
+  collapseDetails: false
+};
+
+// Floors rendered behind the current one as faded context.
+// Distance is in z-levels (1 = one floor away, 2 = two floors away). The
+// viewer keeps these visible as orientation context, but very faded so the
+// current floor reads as the focal point.
+const BG_LAYERS = [
+  { dist: -2, opacity: 0.025 },
+  { dist: -1, opacity: 0.07  },
+  { dist:  1, opacity: 0.07  },
+  { dist:  2, opacity: 0.025 }
+];
+
+// Numpad / arrow key → [dx, dy, dz] for character movement.
+// Compass directions match the mapper script (y increases northward).
+const NUMPAD_DIRS = {
+  Numpad7: [-1,  1, 0],   // northwest
+  Numpad8: [ 0,  1, 0],   // north
+  Numpad9: [ 1,  1, 0],   // northeast
+  Numpad4: [-1,  0, 0],   // west
+  Numpad5: [ 0,  0, 0],   // rest / look (no-op)
+  Numpad6: [ 1,  0, 0],   // east
+  Numpad1: [-1, -1, 0],   // southwest
+  Numpad2: [ 0, -1, 0],   // south
+  Numpad3: [ 1, -1, 0],   // southeast
+  NumpadAdd:      [0, 0,  1],   // up a floor
+  NumpadSubtract: [0, 0, -1]    // down a floor
+};
+const ARROW_DIRS = {
+  ArrowLeft:  [-1, 0, 0],
+  ArrowRight: [ 1, 0, 0],
+  ArrowUp:    [ 0, 1, 0],
+  ArrowDown:  [ 0,-1, 0],
+  PageUp:     [ 0, 0, 1],
+  PageDown:   [ 0, 0,-1]
+};
+
+// ============================================================== file loading
+const dropZone = document.getElementById('canvas');
+const fileInput = document.getElementById('fileInput');
+
+['dragenter', 'dragover'].forEach((ev) =>
+  dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.add('dragging-over'); }));
+['dragleave', 'drop'].forEach((ev) =>
+  dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.remove('dragging-over'); }));
+
+dropZone.addEventListener('drop', (e) => {
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file) loadFile(file);
+});
+fileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) loadFile(file);
+  fileInput.value = '';
+});
+document.getElementById('loadBtn').addEventListener('click', () => fileInput.click());
+
+async function loadFile(file) {
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    ingest(data, file.name);
+  } catch (err) {
+    alert('Failed to load JSON: ' + err.message);
+  }
+}
+
+// Detect bundle vs raw rooms format; tolerate both new and old exports.
+function ingest(data, name) {
+  let rooms = {}, transit = {}, floorLabels = {};
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    if (data.rooms && typeof data.rooms === 'object') {
+      rooms = data.rooms;
+      transit = data.transitEdges || {};
+      floorLabels = data.floorLabels || {};
+    } else {
+      // Possibly v1 localStorage shape: file is just { "<key>": room, ... }
+      // Heuristic: if values look like room records (have key/name/exits fields), treat as rooms.
+      const sample = Object.values(data)[0];
+      if (sample && typeof sample === 'object' && ('exits' in sample || 'placement' in sample || 'key' in sample)) {
+        rooms = data;
+        transit = {};
+        floorLabels = {};
+      }
+    }
+  }
+  state.raw = data;
+  state.fileName = name || 'loaded';
+  state.rooms = [];
+  state.byId.clear();
+  state.byKey.clear();
+  state.targetIdToCoord.clear();
+  state.unplaced = [];
+
+  for (const [key, r] of Object.entries(rooms)) {
+    if (!r || typeof r !== 'object') continue;
+    const rec = normalizeRoom(key, r);
+    state.rooms.push(rec);
+    if (rec.id != null) state.byId.set(rec.id, rec);
+    state.byKey.set(rec.key, rec);
+    if (!rec.placed) state.unplaced.push(rec);
+  }
+
+  buildExitIndex();
+
+  state.transit = transit;
+  state.floorLabels = floorLabels;
+  rebuildFloors();
+  buildFilters();
+  renderSidebar();
+  renderTransit();
+  buildLegend();
+  selectFloor(state.availableFloors[0]);
+  fitAll();
+  updateFileInfo();
+  render();
+}
+
+function normalizeRoom(key, r) {
+  // Coerce older / partial records into the canonical shape so the UI can rely on it.
+  const id = r.id != null ? r.id
+    : (typeof key === 'string' && key.match(/^([A-Za-z][A-Za-z_]*)-(\d+)$/) ? Number(key.split('-')[1]) : null);
+  const placement = r.placement || null;
+  const placed = !!placement && r.x != null && r.y != null && r.z != null;
+  const x = placed ? r.x : null;
+  const y = placed ? r.y : null;
+  const z = placed ? r.z : null;
+  const exits = Array.isArray(r.exits) ? r.exits : [];
+  const neighborhood = r.neighborhood || null;
+  return {
+    key, id, name: r.name || null,
+    placed,
+    primaryTag: r.primaryTag || null,
+    exposureTier: r.exposureTier || null,
+    indoor: !!r.indoor,
+    features: Array.isArray(r.features) ? r.features : [],
+    isHaven: !!r.isHaven,
+    havenOwnerId: r.havenOwnerId != null ? r.havenOwnerId : null,
+    havenIsLocked: !!r.havenIsLocked,
+    havenClaimable: !!r.havenClaimable,
+    isVehicle: !!r.isVehicle || (placement && placement !== 'reckoned' && z != null && z <= VEHICLE_Z_THRESHOLD),
+    placement, x, y, z,
+    islandId: r.islandId || null,
+    positionUncertain: !!r.positionUncertain,
+    area: r.area || null,
+    areaLabel: r.areaLabel || null,
+    neighborhood,
+    visited: r.visited !== false,
+    lastSeen: r.lastSeen || null,
+    exits,
+    raw: r
+  };
+}
+
+// The save format stores exits as { direction, targetRoomId } where targetRoomId
+// is a numeric ID the mapper assigned at runtime. Most rooms in the save have
+// `id: null`, which means byId is empty and exits look "broken" even though
+// every placed room's neighbour cell is unambiguous. Mirror the mapper's own
+// learnCoordsFromExits pass: walk placed rooms, follow each exit's direction
+// vector, and infer the target's "x,y,z" coordinate. If two placed rooms
+// disagree about where the same id is, drop it.
+function buildExitIndex() {
+  state.targetIdToCoord.clear();
+  for (const r of state.rooms) {
+    if (!r.placed || !Array.isArray(r.exits)) continue;
+    for (const e of r.exits) {
+      if (e == null || e.targetRoomId == null) continue;
+      const off = COMPASS[e.direction];
+      if (!off) continue;             // unknown direction (e.g. "passage 1") — skip
+      const dz = e.direction === 'up' ? 1 : e.direction === 'down' ? -1 : 0;
+      const key = `${r.x + off[0]},${r.y + off[1]},${r.z + dz}`;
+      const prev = state.targetIdToCoord.get(e.targetRoomId);
+      if (prev === undefined) {
+        state.targetIdToCoord.set(e.targetRoomId, key);
+      } else if (prev !== null && prev !== key) {
+        // conflict — two placed rooms disagree, trust neither
+        state.targetIdToCoord.set(e.targetRoomId, null);
+      }
+    }
+  }
+}
+
+// Resolve an exit to its target room. Prefers the explicit id; falls back to
+// the coordinate inferred by buildExitIndex() for rooms whose id is missing
+// from this save (common after ID resets or cross-session migrations).
+// Inferred coords are only accepted when the inferred target has at least one
+// exit whose reverse-direction points back at the source — otherwise stale or
+// reused IDs can teleport the viewer two or more cells away.
+function resolveExitTarget(e, sourceRoom) {
+  if (!e || e.targetRoomId == null) return null;
+  const direct = state.byId.get(e.targetRoomId);
+  if (direct) return direct;
+  const coord = state.targetIdToCoord.get(e.targetRoomId);
+  if (!coord || !state.byKey.has(coord)) return null;
+  if (!sourceRoom || sourceRoom.x == null) return state.byKey.get(coord);
+  const target = state.byKey.get(coord);
+  // Mutual confirmation: does target have any exit whose reverse-direction
+  // lands exactly at sourceRoom's coordinate?
+  if (Array.isArray(target.exits)) {
+    for (const e2 of target.exits) {
+      const off = COMPASS[e2.direction];
+      if (!off) continue;
+      const dz = e2.direction === 'up' ? 1 : e2.direction === 'down' ? -1 : 0;
+      // Does the inferred target have any exit whose target coord lands exactly at sourceRoom?
+      // (i.e., does target's exit point back at sourceRoom?)
+      if (target.x + off[0] === sourceRoom.x &&
+          target.y + off[1] === sourceRoom.y &&
+          target.z + dz === sourceRoom.z) {
+        return target;
+      }
+    }
+  }
+  return null;
+}
+
+function rebuildFloors() {
+  const zSet = new Set();
+  for (const r of state.rooms) {
+    if (r.z != null) zSet.add(r.z);
+  }
+  // Sort descending (ground level first, then sublevels, then estimated pseudo-floors at the bottom).
+  state.availableFloors = [...zSet].sort((a, b) => b - a);
+  const sel = document.getElementById('floorSel');
+  sel.innerHTML = '';
+  for (const z of state.availableFloors) {
+    const opt = document.createElement('option');
+    opt.value = String(z);
+    opt.textContent = floorLabel(z);
+    sel.appendChild(opt);
+  }
+  sel.disabled = state.availableFloors.length === 0;
+}
+
+function floorLabel(z) {
+  if (state.floorLabels && state.floorLabels[z]) return state.floorLabels[z];
+  if (z <= VEHICLE_Z_THRESHOLD) return `z=${z} (In transit)`;
+  if (z === 0) return 'z=0 (Street level)';
+  if (z > 0) return `z=+${z}`;
+  return `z=${z} (Sublevel ${-z})`;
+}
+
+function updateFileInfo() {
+  const el = document.getElementById('fileInfo');
+  const parts = [];
+  parts.push(state.fileName);
+  parts.push(`${state.rooms.length} rooms`);
+  const lines = Object.keys(state.transit).length;
+  if (lines) parts.push(`${lines} transit line(s)`);
+  el.textContent = parts.join(' · ');
+}
+
+// ============================================================== filters & sidebar
+function buildFilters() {
+  const counts = {
+    primaryTag: new Map(),
+    exposureTier: new Map(),
+    placement: new Map(),
+    neighborhood: new Map()
+  };
+  for (const r of state.rooms) {
+    if (r.primaryTag) counts.primaryTag.set(r.primaryTag, (counts.primaryTag.get(r.primaryTag) || 0) + 1);
+    if (r.exposureTier) counts.exposureTier.set(r.exposureTier, (counts.exposureTier.get(r.exposureTier) || 0) + 1);
+    const p = r.placement || 'unplaced';
+    counts.placement.set(p, (counts.placement.get(p) || 0) + 1);
+    if (r.neighborhood && r.neighborhood.name) {
+      counts.neighborhood.set(r.neighborhood.name, (counts.neighborhood.get(r.neighborhood.name) || 0) + 1);
+    }
+  }
+
+  const container = document.getElementById('filters');
+  container.innerHTML = '';
+  const groups = [
+    { key: 'placement', label: 'Placement', values: counts.placement },
+    { key: 'primaryTag', label: 'Primary tag', values: counts.primaryTag },
+    { key: 'exposureTier', label: 'Exposure tier', values: counts.exposureTier },
+    { key: 'neighborhood', label: 'Neighborhood', values: counts.neighborhood }
+  ];
+  for (const g of groups) {
+    if (g.values.size === 0) continue;
+    const sec = document.createElement('div');
+    sec.innerHTML = `<h2 style="margin:6px 0 4px; font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">${g.label}</h2>`;
+    const list = document.createElement('div');
+    list.className = 'filter-list';
+    const sorted = [...g.values.entries()].sort((a, b) => b[1] - a[1]);
+    for (const [val, n] of sorted) {
+      const id = `flt-${g.key}-${val}`;
+      const row = document.createElement('label');
+      row.innerHTML = `
+        <input type="checkbox" checked data-filter="${g.key}" data-value="${escapeAttr(val)}" id="${id}">
+        <span class="swatch" style="background:${colorFor(g.key, val)}"></span>
+        <span>${escapeHtml(val)}</span>
+        <span class="count">${n}</span>
+      `;
+      list.appendChild(row);
+    }
+    sec.appendChild(list);
+    container.appendChild(sec);
+  }
+  // Haven toggle
+  const havenSec = document.createElement('div');
+  havenSec.innerHTML = `<label style="display:flex; align-items:center; gap:6px; margin-top:6px; cursor:pointer;">
+    <input type="checkbox" id="havenOnly"> <span>Only havens / claimable</span>
+  </label>`;
+  container.appendChild(havenSec);
+  havenSec.querySelector('input').addEventListener('change', (e) => {
+    state.filters.havenOnly = e.target.checked;
+    render();
+  });
+  container.addEventListener('change', onFilterChange);
+}
+
+function onFilterChange(e) {
+  const cb = e.target;
+  if (!cb.matches('input[type="checkbox"][data-filter]')) return;
+  const filter = cb.dataset.filter;
+  const value = cb.dataset.value;
+  const set = state.filters[filter];
+  if (cb.checked) set.add(value); else set.delete(value);
+  render();
+}
+
+function colorFor(category, value) {
+  const palette = COLOR_PALETTES[category];
+  if (!palette) return '#888';
+  if (palette[value]) return palette[value];
+  // Stable hash color for unknown categories (mostly neighborhoods).
+  let h = 0;
+  for (let i = 0; i < value.length; i++) h = (h * 31 + value.charCodeAt(i)) | 0;
+  const hue = ((h % 360) + 360) % 360;
+  return `hsl(${hue}, 50%, 45%)`;
+}
+
+function roomColor(r) {
+  switch (state.colorBy) {
+    case 'keyFeatures':  return featureColor(r);
+    case 'primaryTag':   return colorFor('primaryTag', r.primaryTag || 'other');
+    case 'exposureTier': return colorFor('exposureTier', r.exposureTier || 'other');
+    case 'placement':    return colorFor('placement', r.placement || 'null');
+    case 'haven':
+      if (r.isHaven) return colorFor('haven', 'isHaven');
+      if (r.havenClaimable) return colorFor('haven', 'claimable');
+      return colorFor('haven', 'none');
+    case 'neighborhood':
+      return colorFor('neighborhood', (r.neighborhood && r.neighborhood.name) || 'unknown');
+  }
+  return '#888';
+}
+
+function passesFilters(r) {
+  const f = state.filters;
+  const tag = r.primaryTag || 'other';
+  const tier = r.exposureTier || 'other';
+  const placement = r.placement || 'unplaced';
+  const hood = (r.neighborhood && r.neighborhood.name) || 'unknown';
+  if (f.primaryTag.size > 0 && !f.primaryTag.has(tag)) return false;
+  if (f.exposureTier.size > 0 && !f.exposureTier.has(tier)) return false;
+  if (f.placement.size > 0 && !f.placement.has(placement)) return false;
+  if (f.neighborhood.size > 0 && !f.neighborhood.has(hood)) return false;
+  if (f.havenOnly && !r.isHaven && !r.havenClaimable) return false;
+  return true;
+}
+
+function passesSearch(r) {
+  const q = state.search.toLowerCase().trim();
+  if (!q) return true;
+  const fields = [
+    r.name, r.key, r.id, r.primaryTag, r.exposureTier,
+    r.areaLabel, (r.neighborhood && r.neighborhood.name), (r.neighborhood && r.neighborhood.slug)
+  ];
+  return fields.some((v) => v != null && String(v).toLowerCase().includes(q));
+}
+
+// ============================================================== stats
+function renderSidebar() {
+  renderStats();
+  renderRoomList();
+}
+
+function renderStats() {
+  const stats = document.getElementById('stats');
+  const counts = { placed: 0, unplaced: 0 };
+  const placementCounts = new Map();
+  const havenCount = { havens: 0, claimable: 0 };
+  for (const r of state.rooms) {
+    if (r.placed) counts.placed++; else counts.unplaced++;
+    const p = r.placement || 'unplaced';
+    placementCounts.set(p, (placementCounts.get(p) || 0) + 1);
+    if (r.isHaven) havenCount.havens++;
+    if (r.havenClaimable) havenCount.claimable++;
+  }
+  const transitEdges = Object.values(state.transit).reduce((s, edges) => s + edges.length, 0);
+  stats.innerHTML = `
+    <div class="label">Total rooms</div><div class="value">${state.rooms.length}</div>
+    <div class="label">Placed</div><div class="value">${counts.placed}</div>
+    <div class="label">Unplaced</div><div class="value">${counts.unplaced}</div>
+    <div class="label">Grid</div><div class="value">${placementCounts.get('grid') || 0}</div>
+    <div class="label">Anchored</div><div class="value">${placementCounts.get('anchored') || 0}</div>
+    <div class="label">Estimated</div><div class="value">${placementCounts.get('reckoned') || 0}</div>
+    <div class="label">Havens</div><div class="value">${havenCount.havens}</div>
+    <div class="label">Claimable</div><div class="value">${havenCount.claimable}</div>
+    <div class="label">Transit edges</div><div class="value">${transitEdges}</div>
+    <div class="label">Floors</div><div class="value">${state.availableFloors.length}</div>
+  `;
+}
+
+function renderRoomList() {
+  const list = document.getElementById('roomList');
+  list.innerHTML = '';
+  const onFloor = state.rooms
+    .filter((r) => r.z === state.floor)
+    .filter(passesFilters)
+    .filter(passesSearch);
+  document.getElementById('roomListCount').textContent = `(${onFloor.length})`;
+  if (!onFloor.length) {
+    list.innerHTML = '<div class="empty">No rooms match on this floor.</div>';
+    return;
+  }
+  // Sort: name first, then by y desc, then x asc (rough "reading order")
+  onFloor.sort((a, b) => {
+    const an = (a.name || '').toLowerCase();
+    const bn = (b.name || '').toLowerCase();
+    if (an && !bn) return -1;
+    if (!an && bn) return 1;
+    if (an !== bn) return an.localeCompare(bn);
+    if (a.y !== b.y) return b.y - a.y;
+    return a.x - b.x;
+  });
+  for (const r of onFloor.slice(0, 500)) {
+    const div = document.createElement('div');
+    div.className = 'item' + (r.key === state.selectedKey ? ' selected' : '');
+    div.dataset.key = r.key;
+    div.innerHTML = `
+      <span class="swatch" style="width:8px;height:8px;border-radius:2px;background:${roomColor(r)};"></span>
+      <span class="name" title="${escapeAttr(r.name || r.key)}">${escapeHtml(r.name || '(unnamed)')}</span>
+      <span class="key">${escapeHtml(r.key)}</span>
+    `;
+    div.addEventListener('click', () => selectRoom(r.key));
+    list.appendChild(div);
+  }
+  if (onFloor.length > 500) {
+    const more = document.createElement('div');
+    more.className = 'empty';
+    more.textContent = `… and ${onFloor.length - 500} more. Refine filters or search to narrow down.`;
+    list.appendChild(more);
+  }
+}
+
+function renderTransit() {
+  const el = document.getElementById('transitLines');
+  el.innerHTML = '';
+  const lines = Object.entries(state.transit);
+  if (!lines.length) {
+    el.innerHTML = '<div style="color:var(--text-faint); font-size:12px;">No transit data in this file.</div>';
+    return;
+  }
+  lines.sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [line, edges] of lines) {
+    const wrap = document.createElement('div');
+    wrap.className = 'transit-line';
+    const swatchColor = colorFor('primaryTag', line.toLowerCase().includes('line') ? 'transit' : 'transit');
+    wrap.innerHTML = `
+      <div class="transit-line-header">
+        <span class="swatch" style="background:${swatchColor}"></span>
+        <span class="line-name">${escapeHtml(line)}</span>
+        <span class="count">${edges.length} edge${edges.length === 1 ? '' : 's'}</span>
+      </div>
+    `;
+    const body = document.createElement('div');
+    body.className = 'transit-line-edges';
+    body.style.display = 'none';
+    for (const [a, b] of edges) {
+      const div = document.createElement('div');
+      div.className = 'edge';
+      div.innerHTML = `<div>${escapeHtml(a)}</div><div style="color:var(--text-faint);">↔ ${escapeHtml(b)}</div>`;
+      body.appendChild(div);
+    }
+    wrap.querySelector('.transit-line-header').addEventListener('click', () => {
+      body.style.display = body.style.display === 'none' ? 'block' : 'none';
+    });
+    wrap.appendChild(body);
+    el.appendChild(wrap);
+  }
+}
+
+// ============================================================== SVG rendering
+function render() {
+  renderGrid();
+  renderExits();
+  renderRooms();
+  renderRoomList();
+  renderHud();
+}
+
+function currentRoomSet() {
+  // Rooms on the current floor that pass filters & search
+  return state.rooms.filter((r) =>
+    r.z === state.floor && passesFilters(r) && passesSearch(r)
+  );
+}
+
+function roomBBox(rooms) {
+  if (!rooms.length) return null;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const r of rooms) {
+    if (r.x < minX) minX = r.x;
+    if (r.x > maxX) maxX = r.x;
+    if (r.y < minY) minY = r.y;
+    if (r.y > maxY) maxY = r.y;
+  }
+  return { minX, maxX, minY, maxY };
+}
+
+function renderGrid() {
+  const g = document.getElementById('gridLayer');
+  g.innerHTML = '';
+  const set = currentRoomSet();
+  if (!set.length) return;
+  const bb = roomBBox(set);
+  // 5x5 cell grid behind the rooms; light dotted lines.
+  const step = 1;
+  for (let x = bb.minX; x <= bb.maxX; x += step) {
+    const line = svgEl('line', {
+      x1: x * CELL, y1: bb.minY * CELL, x2: x * CELL, y2: (bb.maxY + 1) * CELL,
+      stroke: 'var(--grid-line)', 'stroke-width': 0.5
+    });
+    g.appendChild(line);
+  }
+  for (let y = bb.minY; y <= bb.maxY; y += step) {
+    const line = svgEl('line', {
+      x1: bb.minX * CELL, y1: y * CELL, x2: (bb.maxX + 1) * CELL, y2: y * CELL,
+      stroke: 'var(--grid-line)', 'stroke-width': 0.5
+    });
+    g.appendChild(line);
+  }
+  // Floor label intentionally not drawn here — the HUD shows it instead so the
+  // floor name doesn't fight with rooms for visual space.
+}
+
+function renderExits() {
+  const g = document.getElementById('exitsLayer');
+  g.innerHTML = '';
+  // 1. Background floors (drawn first so they sit behind the current floor).
+  for (const layer of BG_LAYERS) {
+    const z = state.floor + layer.dist;
+    if (!state.availableFloors.includes(z)) continue;
+    const set = state.rooms.filter((r) => r.z === z && passesFilters(r) && passesSearch(r));
+    if (!set.length) continue;
+    const keySet = new Set(set.map((r) => r.key));
+    for (const r of set) {
+      for (const e of r.exits) {
+        const target = resolveExitTarget(e, r);
+        if (!target || target.z !== r.z) continue;
+        if (!keySet.has(target.key)) continue;
+        const cls = 'exit bg-exit' + (e.locked ? ' locked' : '') + (e.broken ? ' broken' : '');
+        const line = svgEl('line', {
+          x1: (r.x + 0.5) * CELL, y1: (r.y + 0.5) * CELL,
+          x2: (target.x + 0.5) * CELL, y2: (target.y + 0.5) * CELL,
+          class: cls, opacity: layer.opacity
+        });
+        g.appendChild(line);
+        // Background arrows too — faded but still directional so the layered
+        // floors read as "the same map, just dim".
+        const pts = exitArrowPoints(r, e);
+        if (!pts) continue;
+        g.appendChild(svgEl('polygon', {
+          points: pts, class: 'exit-connection bg-connection',
+          opacity: layer.opacity * 1.4   // bump so the arrow head doesn't vanish
+        }));
+      }
+    }
+  }
+  // 2. Current floor (full opacity, interactive).
+  const set = new Set(currentRoomSet().map((r) => r.key));
+  for (const r of currentRoomSet()) {
+    for (const e of r.exits) {
+      const target = resolveExitTarget(e, r);
+      if (!target || target.z !== r.z) continue;
+      if (!set.has(target.key)) continue;        // skip if target filtered out
+      const cls = 'exit' + (e.locked ? ' locked' : '') + (e.broken ? ' broken' : '');
+      const line = svgEl('line', {
+        x1: (r.x + 0.5) * CELL, y1: (r.y + 0.5) * CELL,
+        x2: (target.x + 0.5) * CELL, y2: (target.y + 0.5) * CELL,
+        class: cls, opacity: 0.55
+      });
+      g.appendChild(line);
+      // Directional arrow at the source cell's edge (or corner for diagonals)
+      // pointing into the target. Two adjacent rooms with mutual exits render
+      // as two arrows meeting at the shared edge midpoint — no ambiguity.
+      const pts = exitArrowPoints(r, e);
+      if (!pts) continue;
+      g.appendChild(svgEl('polygon', {
+        points: pts, class: 'exit-connection'
+      }));
+    }
+  }
+  // 3. Up/down exits — directional triangle at the top/bottom edge of the
+  //    source cell, pointing toward the floor above/below.
+  for (const r of currentRoomSet()) {
+    if (!Array.isArray(r.exits)) continue;
+    for (const e of r.exits) {
+      if (e.direction !== 'up' && e.direction !== 'down') continue;
+      const target = resolveExitTarget(e, r);
+      if (!target) continue;
+      const pts = exitArrowPoints(r, e);
+      if (!pts) continue;
+      g.appendChild(svgEl('polygon', {
+        points: pts, class: 'exit-connection vertical'
+      }));
+    }
+  }
+}
+
+// Shared-cell-edge midpoints between two adjacent rooms (in data coords; the
+// wrapper flip takes care of screen orientation). For a horizontal neighbour
+// the shared edge is vertical at x = max(.x); for a vertical neighbour the
+// shared edge is horizontal at y = max(.y). Midpoint on the perpendicular axis
+// is the cell-centre average.
+function exitEdgeCx(a, b) {
+  if (a.x !== b.x) return Math.max(a.x, b.x) * CELL;
+  return ((a.x + b.x + 1) / 2) * CELL;
+}
+function exitEdgeCy(a, b) {
+  if (a.y !== b.y) return Math.max(a.y, b.y) * CELL;
+  return ((a.y + b.y + 1) / 2) * CELL;
+}
+
+// Directional arrow polygon for an exit. The tip lands at the source cell's
+// edge (cardinal) or corner (diagonal) toward the target; the back sits inside
+// the source cell. When two adjacent rooms both have exits, two arrows point
+// at each other across the shared edge — direction is unambiguous.
+function exitArrowPoints(r, e) {
+  const cx = (r.x + 0.5) * CELL;
+  const cy = (r.y + 0.5) * CELL;
+  const d = e.direction;
+  const halfW = 0.18 * CELL;       // half-width for cardinal exits
+  const halfWDiag = 0.13 * CELL;   // tighter on diagonals (corner-only)
+  const halfWVV = 0.16 * CELL;     // half-width for up/down
+  const back = 0.18 * CELL;        // back from cell centre for cardinal
+  const backDiag = 0.20 * CELL;    // diagonal needs more pull-back
+  let tipX, tipY, bx, by, px, py;
+  switch (d) {
+    case 'east':
+      tipX = cx + 0.5 * CELL; tipY = cy;       bx = cx - back; by = cy;
+      px = 0; py = halfW; break;
+    case 'west':
+      tipX = cx - 0.5 * CELL; tipY = cy;       bx = cx + back; by = cy;
+      px = 0; py = halfW; break;
+    case 'north':
+      tipX = cx; tipY = cy + 0.5 * CELL;       bx = cx; by = cy - back;
+      px = halfW; py = 0; break;
+    case 'south':
+      tipX = cx; tipY = cy - 0.5 * CELL;       bx = cx; by = cy + back;
+      px = halfW; py = 0; break;
+    case 'northeast':
+      tipX = cx + 0.5 * CELL; tipY = cy + 0.5 * CELL;
+      bx = cx - backDiag; by = cy - backDiag;
+      px = halfWDiag; py = -halfWDiag; break;
+    case 'northwest':
+      tipX = cx - 0.5 * CELL; tipY = cy + 0.5 * CELL;
+      bx = cx + backDiag; by = cy - backDiag;
+      px = halfWDiag; py = halfWDiag; break;
+    case 'southeast':
+      tipX = cx + 0.5 * CELL; tipY = cy - 0.5 * CELL;
+      bx = cx - backDiag; by = cy + backDiag;
+      px = -halfWDiag; py = -halfWDiag; break;
+    case 'southwest':
+      tipX = cx - 0.5 * CELL; tipY = cy - 0.5 * CELL;
+      bx = cx + backDiag; by = cy + backDiag;
+      px = -halfWDiag; py = halfWDiag; break;
+    case 'up':
+      tipX = cx; tipY = cy + 0.5 * CELL;       bx = cx; by = cy + back;
+      px = halfWVV; py = 0; break;
+    case 'down':
+      tipX = cx; tipY = cy - 0.5 * CELL;       bx = cx; by = cy - back;
+      px = halfWVV; py = 0; break;
+    default:
+      return null;
+  }
+  const f = (v) => v.toFixed(2);
+  return `${f(tipX)},${f(tipY)} ${f(bx + px)},${f(by + py)} ${f(bx - px)},${f(by - py)}`;
+}
+
+// Does this room have any exit that would actually draw an arrow on the
+// current map view? Used to flag rooms that look isolated (onlye
+// passage-style exits, unresolved IDs, or up/down exits from a background
+// floor that aren't drawn). Mirrors what renderExits() actually renders.
+function roomHasVisibleExit(r) {
+  if (!Array.isArray(r.exits) || r.exits.length === 0) return false;
+  const isCurrent = r.z === state.floor;
+  for (const e of r.exits) {
+    if (!e) continue;
+    const target = resolveExitTarget(e, r);
+    if (!target) continue;
+    const isVertical = e.direction === 'up' || e.direction === 'down';
+    if (isVertical && isCurrent) return true;     // up/down arrows are drawn only on current floor
+    if (!isVertical && target.z === r.z) return true; // same-floor h/v drawn on both current & bg
+  }
+  return false;
+}
+
+function renderRooms() {
+  const g = document.getElementById('roomsLayer');
+  g.innerHTML = '';
+  // 1. Background floors (drawn first so the current floor sits on top).
+  for (const layer of BG_LAYERS) {
+    const z = state.floor + layer.dist;
+    if (!state.availableFloors.includes(z)) continue;
+    const set = state.rooms.filter((r) => r.z === z && passesFilters(r) && passesSearch(r));
+    if (!set.length) continue;
+    for (const r of set) {
+      const noExits = !roomHasVisibleExit(r);
+      const cls = 'room bg-room'
+        + (r.placement === 'reckoned' ? ' placement-reckoned' : '')
+        + (r.placement === null ? ' placement-null' : '')
+        + (noExits ? ' no-exits' : '');
+      const gEl = svgEl('g', {
+        class: cls,
+        transform: `translate(${r.x * CELL}, ${r.y * CELL})`,
+        'data-key': r.key,
+        style: `--bg-opacity: ${layer.opacity}`
+      });
+      const rect = svgEl('rect', {
+        x: ROOM_PAD, y: ROOM_PAD,
+        width: CELL - ROOM_PAD * 2, height: CELL - ROOM_PAD * 2,
+        rx: 3, ry: 3,
+        fill: roomColor(r),
+        stroke: darken(roomColor(r))
+      });
+      gEl.appendChild(rect);
+      g.appendChild(gEl);
+    }
+  }
+  // 2. Current floor (interactive; current room gets the gold marker).
+  for (const r of currentRoomSet()) {
+    const isCurrent = r.key === state.currentRoomKey;
+    const noExits = !roomHasVisibleExit(r);
+    const cls = 'room'
+      + (r.placement === 'reckoned' ? ' placement-reckoned' : '')
+      + (r.placement === null ? ' placement-null' : '')
+      + (r.key === state.selectedKey ? ' selected' : '')
+      + (isCurrent ? ' current' : '')
+      + (noExits ? ' no-exits' : '');
+    const gEl = svgEl('g', {
+      class: cls,
+      transform: `translate(${r.x * CELL}, ${r.y * CELL})`,
+      'data-key': r.key
+    });
+    const rect = svgEl('rect', {
+      x: ROOM_PAD, y: ROOM_PAD,
+      width: CELL - ROOM_PAD * 2, height: CELL - ROOM_PAD * 2,
+      rx: 3, ry: 3,
+      fill: roomColor(r),
+      stroke: darken(roomColor(r))
+    });
+    gEl.appendChild(rect);
+    // Show label on hover via title; SVG <title> is the standard way.
+    const title = svgEl('title');
+    title.textContent = `${r.name || '(unnamed)'} — ${r.key}${r.id != null ? ' (id ' + r.id + ')' : ''}`;
+    gEl.appendChild(title);
+    // A small triangle on top of the current room — like a MUD client cursor.
+    // Counter-flip so it still points down at the room after the wrapper flips y.
+    if (isCurrent) {
+      const marker = svgEl('polygon', {
+        class: 'marker',
+        points: `${CELL/2},${ROOM_PAD - 1} ${CELL/2 - 4},${ROOM_PAD - 7} ${CELL/2 + 4},${ROOM_PAD - 7}`,
+        transform: 'scale(1, -1)'
+      });
+      gEl.appendChild(marker);
+    }
+    gEl.addEventListener('click', () => {
+      selectRoom(r.key);
+      // Clicking also makes it the current room for keyboard nav.
+      state.currentRoomKey = r.key;
+      renderHud();
+    });
+    g.appendChild(gEl);
+  }
+}
+
+function svgEl(name, attrs) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', name);
+  if (attrs) for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+function darken(hex) {
+  // Accept #rrggbb or hsl(); fall back gracefully.
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return 'rgba(0,0,0,0.4)';
+  const n = parseInt(m[1], 16);
+  const r = Math.max(0, ((n >> 16) & 0xff) - 40);
+  const g = Math.max(0, ((n >> 8) & 0xff) - 40);
+  const b = Math.max(0, (n & 0xff) - 40);
+  return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
+// ============================================================== legend
+function buildLegend() {
+  const legend = document.getElementById('legend');
+  legend.innerHTML = `<h3>${escapeHtml(labelForColorBy(state.colorBy))}</h3>`;
+  if (state.colorBy === 'keyFeatures') {
+    // The focused palette has a fixed, small set of categories — list them
+    // explicitly so users see exactly what each colour means.
+    legend.appendChild(legendRow(FEATURE_COLOR_DEFAULT, 'Standard'));
+    for (const f of FEATURE_PRIORITY) {
+      legend.appendChild(legendRow(f.color, f.label));
+    }
+  } else {
+    const seen = new Set();
+    for (const r of state.rooms) {
+      const v = valueForColorBy(r);
+      if (seen.has(v)) continue;
+      seen.add(v);
+      legend.appendChild(legendRow(roomColor(r), v));
+    }
+  }
+  legend.style.display = 'block';
+}
+
+function legendRow(color, label) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = `<span class="swatch" style="background:${color}"></span><span>${escapeHtml(label)}</span>`;
+  return row;
+}
+
+function valueForColorBy(r) {
+  switch (state.colorBy) {
+    case 'keyFeatures':  return featureLabel(r);
+    case 'primaryTag':   return r.primaryTag || 'other';
+    case 'exposureTier': return r.exposureTier || 'other';
+    case 'placement':    return r.placement || 'unplaced';
+    case 'haven':
+      if (r.isHaven) return 'haven';
+      if (r.havenClaimable) return 'claimable';
+      return 'no';
+    case 'neighborhood': return (r.neighborhood && r.neighborhood.name) || 'unknown';
+  }
+  return '?';
+}
+
+function labelForColorBy(key) {
+  return {
+    keyFeatures: 'Key features',
+    primaryTag: 'Primary tag',
+    exposureTier: 'Exposure tier',
+    placement: 'Placement',
+    haven: 'Haven status',
+    neighborhood: 'Neighborhood'
+  }[key] || key;
+}
+
+// ============================================================== selection / details
+function selectRoom(key) {
+  state.selectedKey = key;
+  // Selecting a room also makes it the current one for keyboard navigation;
+  // you can always set them independently later if needed.
+  state.currentRoomKey = key;
+  renderRooms();
+  renderRoomList();
+  renderDetails();
+  renderHud();
+}
+
+// ============================================================== navigation
+function navigate(dx, dy, dz) {
+  // dz != 0 means change floor (up/down).
+  if (dz !== 0) {
+    const targetZ = state.floor + dz;
+    if (!state.availableFloors.includes(targetZ)) return false;
+    selectFloor(targetZ);
+    // Try to keep the same (x,y) on the new floor; otherwise drop the marker.
+    if (state.currentRoomKey) {
+      const cur = state.byKey.get(state.currentRoomKey);
+      if (cur) {
+        const sameXY = `${cur.x},${cur.y},${targetZ}`;
+        if (state.byKey.has(sameXY)) {
+          state.currentRoomKey = sameXY;
+          state.selectedKey = sameXY;
+        } else {
+          state.currentRoomKey = null;
+        }
+      }
+    }
+    render();   // re-render so the current-room marker appears on the new floor
+    renderDetails();
+    return true;
+  }
+
+  // dx/dy != 0 means a horizontal move on the current floor.
+  if (!state.currentRoomKey) {
+    // No current room yet — snap to the first room on the current floor.
+    const first = state.rooms.find((r) => r.z === state.floor && r.placed);
+    if (first) {
+      state.currentRoomKey = first.key;
+      autoCenterOn(first);
+      render();
+      renderDetails();
+      renderHud();
+    }
+    return false;
+  }
+
+  const cur = state.byKey.get(state.currentRoomKey);
+  if (!cur) return false;
+
+  // Movement strictly follows the room's exits — no grid-adjacency fallback.
+// If you press a direction without a matching exit, the move is blocked.
+  const dirName = Object.keys(COMPASS).find((k) => {
+    const v = COMPASS[k];
+    return v[0] === dx && v[1] === dy;
+  });
+  let target = null;
+  if (dirName && Array.isArray(cur.exits)) {
+    const exit = cur.exits.find((e) => e.direction === dirName && resolveExitTarget(e, cur) != null);
+    if (exit) target = resolveExitTarget(exit, cur);
+  }
+  if (!target) {
+    flashBlocked();
+    return false;
+  }
+
+  state.currentRoomKey = target.key;
+  if (target.z !== state.floor) selectFloor(target.z);
+  if (state.followCurrent) autoCenterOn(target);
+  state.selectedKey = target.key;      // keep details panel in sync
+  render();
+  renderDetails();
+  renderHud();
+  return true;
+}
+
+function autoCenterOn(room) {
+  const svg = document.getElementById('map');
+  const rect = svg.getBoundingClientRect();
+  const w = rect.width, h = rect.height;
+  // +y in data renders UP, so the centering formula has a + on ty instead of -.
+  state.view.tx = w / 2 - (room.x + 0.5) * CELL * state.view.scale;
+  state.view.ty = h / 2 + (room.y + 0.5) * CELL * state.view.scale;
+  applyView();
+}
+
+function flashBlocked() {
+  const el = document.querySelector('.room.current');
+  if (!el) return;
+  el.classList.remove('blocked');   // restart animation if already flashing
+  // Force reflow so the animation re-triggers on rapid presses.
+  void el.getBoundingClientRect();
+  el.classList.add('blocked');
+  setTimeout(() => el.classList.remove('blocked'), 320);
+}
+
+function renderHud() {
+  const hud = document.getElementById('navHud');
+  if (!state.rooms.length) { hud.style.display = 'none'; return; }
+  hud.style.display = 'block';
+  // Current floor sits at the top — this is the headline the floor label used to be.
+  document.getElementById('navCurrentFloor').textContent = floorLabel(state.floor);
+  const cur = state.currentRoomKey ? state.byKey.get(state.currentRoomKey) : null;
+  document.getElementById('navCurrentName').textContent =
+    cur ? (cur.name || '(unnamed)') : '— click a room or fit to set current —';
+  document.getElementById('navCurrentPos').textContent =
+    cur ? `${cur.key}${cur.id != null ? ' · id ' + cur.id : ''}` : '';
+  // Background summary: what floors are visible underneath.
+  const bg = document.getElementById('navBgSummary');
+  const lines = [];
+  for (const layer of BG_LAYERS) {
+    const z = state.floor + layer.dist;
+    if (!state.availableFloors.includes(z)) continue;
+    const n = state.rooms.filter((r) => r.z === z && passesFilters(r) && passesSearch(r)).length;
+    if (!n) continue;
+    const dir = layer.dist < 0 ? 'below' : 'above';
+    lines.push(`<div><span class="dot" style="background:${layer.dist < 0 ? '#4a8aca' : '#caa84a'}; opacity:${layer.opacity + 0.4};"></span>z=${z} (${dir}, ${n} room${n === 1 ? '' : 's'})</div>`);
+  }
+  bg.innerHTML = lines.length ? `<div style="opacity:0.7;">Floors in view:</div>` + lines.join('') : '';
+}
+
+function renderDetails() {
+  const body = document.getElementById('detailsBody');
+  const r = state.selectedKey ? state.byKey.get(state.selectedKey) : null;
+  if (!r) {
+    body.innerHTML = `
+      <div class="details-empty">
+        Click a room to see its details.
+        <div class="hint">Drag/drop or load a JSON in the top bar to begin.</div>
+      </div>
+    `;
+    return;
+  }
+  const badgeClass = r.placement || 'null';
+  const nb = r.neighborhood;
+  const html = [];
+  html.push(`<div class="details-content">`);
+  html.push(`<h2>${escapeHtml(r.name || '(unnamed)')}</h2>`);
+  html.push(`<div class="key-line">key: <code>${escapeHtml(r.key)}</code>${r.id != null ? ' · id: <code>' + r.id + '</code>' : ''}</div>`);
+  html.push(`<table>`);
+  html.push(`<tr><td>Placement</td><td><span class="badge ${badgeClass}">${escapeHtml(r.placement || 'unplaced')}</span></td></tr>`);
+  if (r.placement) {
+    html.push(`<tr><td>Position</td><td><code>${r.x}, ${r.y}, ${r.z}</code></td></tr>`);
+  }
+  if (r.placement === 'reckoned') {
+    html.push(`<tr><td>Area</td><td>${escapeHtml(r.areaLabel || r.area || '—')}</td></tr>`);
+    html.push(`<tr><td>Position certain</td><td>${r.positionUncertain ? 'no' : 'yes'}</td></tr>`);
+  }
+  if (r.primaryTag) html.push(`<tr><td>Primary tag</td><td><span class="tag-swatch" style="background:${colorFor('primaryTag', r.primaryTag)}"></span><code>${escapeHtml(r.primaryTag)}</code></td></tr>`);
+  if (r.exposureTier) html.push(`<tr><td>Exposure</td><td><span class="tag-swatch" style="background:${colorFor('exposureTier', r.exposureTier)}"></span><code>${escapeHtml(r.exposureTier)}</code></td></tr>`);
+  if (nb) {
+    html.push(`<tr><td>Neighborhood</td><td><span class="tag-swatch" style="background:${colorFor('neighborhood', nb.name || 'unknown')}"></span>${escapeHtml(nb.name)}${nb.sect ? ' <span class="badge">' + escapeHtml(nb.sect) + '</span>' : ''}</td></tr>`);
+  }
+  html.push(`<tr><td>Indoor</td><td>${r.indoor ? 'yes' : 'no'}</td></tr>`);
+  if (r.features && r.features.length) {
+    html.push(`<tr><td>Features</td><td>${r.features.map((f) => '<span class="tag-swatch" style="background:' + featureColor(r) + '"></span><code>' + escapeHtml(f) + '</code>').join(' ')}</td></tr>`);
+  }
+  html.push(`<tr><td>Haven</td><td>${r.isHaven ? ('yes' + (r.havenIsLocked ? ' (locked)' : '') + (r.havenOwnerId != null ? ' · owner id ' + r.havenOwnerId : '')) : 'no'}</td></tr>`);
+  html.push(`<tr><td>Claimable</td><td>${r.havenClaimable ? 'yes' : 'no'}</td></tr>`);
+  html.push(`<tr><td>Vehicle</td><td>${r.isVehicle ? 'yes' : 'no'}</td></tr>`);
+  if (r.visited != null) html.push(`<tr><td>Visited</td><td>${r.visited ? 'yes' : 'no'}</td></tr>`);
+  if (r.lastSeen) {
+    const d = new Date(r.lastSeen);
+    html.push(`<tr><td>Last seen</td><td>${escapeHtml(d.toLocaleString())}</td></tr>`);
+  }
+  html.push(`</table>`);
+  if (r.exits && r.exits.length) {
+    html.push(`<h3>Exits (${r.exits.length})</h3>`);
+    html.push(`<div class="exits-list">`);
+    for (const e of r.exits) {
+      const target = resolveExitTarget(e, r);
+      const targetName = target ? (target.name || target.key) : (e.targetRoomId != null ? '(room id ' + e.targetRoomId + ' not yet seen)' : '(no target id)');
+      const flags = [];
+      if (e.locked) flags.push('locked');
+      if (e.broken) flags.push('broken');
+      // data-target-key lets the click handler jump to the room even when
+      // the numeric id is stale and only the inferred coordinate resolved it.
+      const targetKey = target ? target.key : '';
+      html.push(`<div class="exit-row" data-target-key="${escapeHtml(targetKey)}">
+        <span class="dir">${escapeHtml(e.direction)}</span>
+        <span class="name">${escapeHtml(targetName)}</span>
+        ${flags.length ? '<span class="flags">— ' + flags.join(', ') + '</span>' : ''}
+      </div>`);
+    }
+    html.push(`</div>`);
+  }
+  html.push(`</div>`);
+  body.innerHTML = html.join('');
+  body.querySelectorAll('.exit-row').forEach((row) => {
+    const key = row.dataset.targetKey;
+    if (key) {
+      row.addEventListener('click', () => {
+        const target = state.byKey.get(key);
+        if (target) {
+          selectFloor(target.z);
+          selectRoom(target.key);
+        }
+      });
+    }
+  });
+}
+
+// ============================================================== view / pan / zoom
+function selectFloor(z) {
+  state.floor = z;
+  const sel = document.getElementById('floorSel');
+  if (sel) sel.value = String(z);
+  render();
+}
+
+function fitAll() {
+  const set = currentRoomSet();
+  const bb = roomBBox(set);
+  if (!bb) return;
+  const svg = document.getElementById('map');
+  const rect = svg.getBoundingClientRect();
+  const w = rect.width, h = rect.height;
+  const worldW = (bb.maxX - bb.minX + 2) * CELL;
+  const worldH = (bb.maxY - bb.minY + 2) * CELL;
+  const scaleX = w / worldW;
+  const scaleY = h / worldH;
+  state.view.scale = Math.min(scaleX, scaleY, 4);
+  const cx = ((bb.minX + bb.maxX + 1) / 2) * CELL;
+  const cy = ((bb.minY + bb.maxY + 1) / 2) * CELL;
+  // +y data renders UP, so ty = h/2 + cy*scale (the world center sits BELOW the screen center
+  // because +y is above; a +offset on ty pushes the center toward the top of the screen).
+  state.view.tx = w / 2 - cx * state.view.scale;
+  state.view.ty = h / 2 + cy * state.view.scale;
+  applyView();
+}
+
+function resetView() {
+  state.view = { tx: 0, ty: 0, scale: 1 };
+  applyView();
+}
+
+// Re-centre the view on the room you're currently in (or the first room on this
+// floor if you don't have one yet), and snap the zoom back to its default 1×.
+function centerOnCurrentRoom() {
+  state.view.scale = 1;
+  const cur = state.currentRoomKey ? state.byKey.get(state.currentRoomKey) : null;
+  if (cur) {
+    autoCenterOn(cur);
+  } else {
+    const first = state.rooms.find((r) => r.z === state.floor && r.placed);
+    if (first) {
+      state.currentRoomKey = first.key;
+      autoCenterOn(first);
+      renderHud();
+    } else {
+      fitAll();
+    }
+  }
+  applyView();
+}
+
+function applyView() {
+  const v = document.getElementById('viewport');
+  v.setAttribute('transform', `translate(${state.view.tx}, ${state.view.ty}) scale(${state.view.scale})`);
+}
+
+function installPanZoom() {
+  if (state.panZoomInstalled) return;
+  state.panZoomInstalled = true;
+  const svg = document.getElementById('map');
+  let isPanning = false;
+  let startX = 0, startY = 0, startTx = 0, startTy = 0;
+
+  svg.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.room')) return;        // let room clicks fire
+    isPanning = true;
+    startX = e.clientX; startY = e.clientY;
+    startTx = state.view.tx; startTy = state.view.ty;
+    svg.classList.add('panning');
+    e.preventDefault();
+  });
+  window.addEventListener('mouseup', () => { isPanning = false; svg.classList.remove('panning'); });
+  window.addEventListener('mousemove', (e) => {
+    if (!isPanning) return;
+    state.view.tx = startTx + (e.clientX - startX);
+    state.view.ty = startTy + (e.clientY - startY);
+    applyView();
+  });
+
+  svg.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const factor = Math.pow(1.15, -e.deltaY / 100);
+    const newScale = Math.max(0.1, Math.min(8, state.view.scale * factor));
+    // Zoom around the cursor position so the cell under it stays put.
+    // The wrapper flips y, so the world coord under the cursor has a negated y.
+    const wx = (mx - state.view.tx) / state.view.scale;
+    const wy = -(my - state.view.ty) / state.view.scale;
+    state.view.scale = newScale;
+    state.view.tx = mx - wx * newScale;
+    state.view.ty = my + wy * newScale;
+    applyView();
+  }, { passive: false });
+}
+
+window.addEventListener('resize', () => {
+  // Keep the current view anchored to the centre on resize.
+  const svg = document.getElementById('map');
+  const rect = svg.getBoundingClientRect();
+  const oldW = rect.width, oldH = rect.height;
+  // No resize handler needed: pan/zoom is absolute; the user can re-fit.
+});
+
+// ============================================================== wiring
+document.getElementById('floorSel').addEventListener('change', (e) => {
+  selectFloor(Number(e.target.value));
+});
+document.getElementById('colorBy').addEventListener('change', (e) => {
+  state.colorBy = e.target.value;
+  buildLegend();
+  renderRooms();
+  renderRoomList();
+});
+document.getElementById('fitBtn').addEventListener('click', fitAll);
+document.getElementById('centerBtn').addEventListener('click', () => { resetView(); fitAll(); });
+document.getElementById('centerOnRoomBtn').addEventListener('click', centerOnCurrentRoom);
+document.getElementById('toggleDetailsBtn').addEventListener('click', () => {
+  state.collapseDetails = !state.collapseDetails;
+  document.getElementById('details').classList.toggle('collapsed', state.collapseDetails);
+});
+document.getElementById('searchInput').addEventListener('input', (e) => {
+  state.search = e.target.value;
+  render();
+});
+
+document.querySelectorAll('.tabs .tab').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabs .tab').forEach((b) => b.classList.toggle('active', b === btn));
+    const target = btn.dataset.tab;
+    document.querySelectorAll('.tab-panel').forEach((p) => {
+      p.style.display = (p.dataset.tabPanel === target) ? '' : 'none';
+    });
+  });
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.target.matches('input, select, textarea')) return;
+
+  // Resolve the direction: prefer e.code (which distinguishes numpad from
+  // the main row), but fall back to a derived code from e.key so simulated
+  // key events (and NumLock variations) still work.
+  let code = e.code;
+  if (!NUMPAD_DIRS[code] && !ARROW_DIRS[code]) {
+    if (/^[2-8]$/.test(e.key)) code = 'Numpad' + e.key;
+    else if (e.key === '+' || e.key === '=') code = 'NumpadAdd';
+    else if (e.key === '-') code = 'NumpadSubtract';
+    else if (e.key === 'Enter') code = (e.code === 'NumpadEnter') ? 'NumpadEnter' : 'Enter';
+  }
+
+  // Character movement — numpad (preferred) or arrow keys.
+  if (NUMPAD_DIRS[code]) {
+    const [dx, dy, dz] = NUMPAD_DIRS[code];
+    if (navigate(dx, dy, dz)) e.preventDefault();
+    return;
+  }
+  if (ARROW_DIRS[code]) {
+    const [dx, dy, dz] = ARROW_DIRS[code];
+    if (navigate(dx, dy, dz)) e.preventDefault();
+    return;
+  }
+
+  if (e.key === 'f' || e.key === 'F') fitAll();
+  else if (e.key === 'r' || e.key === 'R') { resetView(); fitAll(); }
+  else if (e.key === 'c' || e.key === 'C' || e.key === 'Home') centerOnCurrentRoom();
+  else if (e.key === 'Escape') {
+    state.selectedKey = null;
+    state.currentRoomKey = null;
+    renderRooms(); renderRoomList(); renderDetails(); renderHud();
+  }
+  // NumpadEnter (or regular Enter on the canvas) re-centres on the current room.
+  else if ((code === 'NumpadEnter' || code === 'Enter') && state.currentRoomKey) {
+    const cur = state.byKey.get(state.currentRoomKey);
+    if (cur) { autoCenterOn(cur); e.preventDefault(); }
+  }
+});
+
+// ============================================================== utils
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+function escapeAttr(s) { return escapeHtml(s); }
+
+// ============================================================== boot
+installPanZoom();
+
+// Built-in sample for verification and demos. Activated with ?sample=1.
+const SAMPLE_DATA = {
+  "schemaVersion": 3,
+  "rooms": {
+    "0,0,0": {
+      "key": "0,0,0", "name": "Town Square", "id": 100,
+      "primaryTag": "street", "exposureTier": "public", "indoor": false,
+      "features": [], "isHaven": false, "havenOwnerId": null, "havenIsLocked": false, "havenClaimable": false,
+      "isVehicle": false, "placement": "grid", "x": 0, "y": 0, "z": 0,
+      "islandId": null, "positionUncertain": false,
+      "exits": [
+        { "direction": "north", "targetRoomId": 101, "locked": false, "broken": false },
+        { "direction": "east", "targetRoomId": 102, "locked": false, "broken": false }
+      ],
+      "neighborhood": { "slug": "downtown", "name": "Downtown", "sect": "camarilla" },
+      "visited": true, "lastSeen": Date.now()
+    },
+    "0,1,0": {
+      "key": "0,1,0", "name": "Old Library", "id": 101,
+      "primaryTag": "indoor", "exposureTier": "public", "indoor": true,
+      "features": ["library"], "isHaven": true, "havenOwnerId": 50, "havenIsLocked": true, "havenClaimable": false,
+      "isVehicle": false, "placement": "grid", "x": 0, "y": 1, "z": 0,
+      "islandId": null, "positionUncertain": false,
+      "exits": [
+        { "direction": "south", "targetRoomId": 100, "locked": false, "broken": false },
+        { "direction": "up", "targetRoomId": 103, "locked": true, "broken": false }
+      ],
+      "neighborhood": { "slug": "downtown", "name": "Downtown", "sect": "camarilla" },
+      "visited": true, "lastSeen": Date.now()
+    },
+    "1,0,0": {
+      "key": "1,0,0", "name": "Back Alley", "id": 102,
+      "primaryTag": "street", "exposureTier": "private", "indoor": false,
+      "features": [], "isHaven": false, "havenOwnerId": null, "havenIsLocked": false, "havenClaimable": true,
+      "isVehicle": false, "placement": "anchored", "x": 1, "y": 0, "z": 0,
+      "islandId": null, "positionUncertain": false,
+      "exits": [
+        { "direction": "west", "targetRoomId": 100, "locked": false, "broken": false },
+        { "direction": "passage 1", "targetRoomId": 200, "locked": false, "broken": false }
+      ],
+      "neighborhood": { "slug": "downtown", "name": "Downtown", "sect": "anarch" },
+      "visited": true, "lastSeen": Date.now()
+    },
+    "0,1,1": {
+      "key": "0,1,1", "name": "Library Attic", "id": 103,
+      "primaryTag": "indoor", "exposureTier": "private", "indoor": true,
+      "features": ["attic"], "isHaven": false, "havenOwnerId": null, "havenIsLocked": false, "havenClaimable": false,
+      "isVehicle": false, "placement": "grid", "x": 0, "y": 1, "z": 1,
+      "islandId": null, "positionUncertain": false,
+      "exits": [
+        { "direction": "down", "targetRoomId": 101, "locked": true, "broken": false }
+      ],
+      "neighborhood": { "slug": "downtown", "name": "Downtown", "sect": "camarilla" },
+      "visited": true, "lastSeen": Date.now()
+    },
+    "sewer-200": {
+      "key": "sewer-200", "name": "Flooded Tunnel", "id": 200,
+      "primaryTag": "sewer", "exposureTier": "underground", "indoor": true,
+      "features": [], "isHaven": false, "havenOwnerId": null, "havenIsLocked": false, "havenClaimable": false,
+      "isVehicle": false, "placement": "reckoned", "x": 2, "y": 0, "z": -1478,
+      "islandId": "island-downtown-sewer", "positionUncertain": false,
+      "area": "sewer::downtown", "areaLabel": "Sewer (Downtown)",
+      "exits": [
+        { "direction": "passage 2", "targetRoomId": 102, "locked": false, "broken": false }
+      ],
+      "neighborhood": { "slug": "downtown", "name": "Downtown", "sect": "anarch" },
+      "visited": true, "lastSeen": Date.now()
+    }
+  },
+  "transitEdges": {
+    "Market-Frankford Line": [
+      ["Berks Station [ SEPTA Market-Frankford Line ]", "Girard Station [ SEPTA Market-Frankford Line ]"],
+      ["Girard Station [ SEPTA Market-Frankford Line ]", "Somerset Station [ SEPTA Market-Frankford Line ]"]
+    ]
+  },
+  "floorLabels": {},
+  "exportedAt": "2026-09-14T17:00:00.000Z"
+};
+if (new URLSearchParams(location.search).get('sample') === '1') {
+  ingest(SAMPLE_DATA, 'built-in sample');
+}
+// Initial empty-state: a hint to drop a file.
+(function () {
+  const overlay = document.createElement('div');
+  overlay.className = 'empty-canvas';
+  overlay.innerHTML = `
+    <div class="big">Drop a PbN Mapper JSON here</div>
+    <div>…or click <b>Load</b> in the top bar.</div>
+    <div style="font-size:11px;">Both the new exported bundle (<code>{rooms, transitEdges, floorLabels}</code>) and the raw localStorage shape are accepted.</div>
+  `;
+  document.getElementById('canvas').appendChild(overlay);
+  // Remove overlay once a file is loaded.
+  const observer = new MutationObserver(() => {
+    if (state.rooms.length) overlay.remove();
+  });
+  // Lightweight hook: render() will mount rooms; remove overlay on first successful ingest.
+  const _render = render;
+  // eslint-disable-next-line no-func-assign
+  // Actually simpler: just poll state.rooms.
+  setInterval(() => {
+    if (state.rooms.length && overlay.parentNode) overlay.remove();
+  }, 300);
+})();
+</script>
+</body>
+</html>
