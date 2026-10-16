@@ -5,7 +5,7 @@ confirm the copy you downloaded is the copy that was published here.
 
 | File | SHA-256 | Size | Last changed in |
 | --- | --- | --- | --- |
-| `PbN-Mapper.user.js` | `fe8a29663a4bd7983f5303fc4bf83827167f85c4978619717ca65167b7f7edec` | 84,803 bytes | [`e4ad1c8`](https://github.com/Vargess/PhillyByNight/commit/e4ad1c8) |
+| `PbN-Mapper.user.js` | `348884e24a07155338e79e8f48f657b808da387147ba49488dca1a4d285cb4e8` | 88,180 bytes | [`5d87a91`](https://github.com/Vargess/PhillyByNight/commit/5d87a91) |
 | `map-viewer.html` | `5080bfb3a1313ddab56a2f6c77408a8f342798cbfba8f526d9357147d3638bc9` | 78,894 bytes | [`64f05dc`](https://github.com/Vargess/PhillyByNight/commit/64f05dc) |
 
 Only these two are listed. They're the files that run code — one in your browser on
