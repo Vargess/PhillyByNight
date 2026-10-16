@@ -8,6 +8,25 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 3.6.0 — 2026-10-16
+
+### Changed
+- **Exit lines on the map now use the footer's palette**: green open, red locked,
+  yellow broken, with locked and broken still dashed. Previously every blocked exit
+  was one maroon regardless, so a broken door was indistinguishable from a locked one
+  on the map even after the footer learned to tell them apart. The three colours are
+  defined once and shared, so the two views cannot drift again.
+
+### Notes
+- The old lines shaded between two greys according to an internal `known` flag. That
+  sounds like "have we been there" but actually means "did `targetRoomId` resolve",
+  which most older grid captures lack — 399 of 426 Street-level lines fall into it.
+  Shading open exits by it would have painted nearly the whole surface as unexplored,
+  so the distinction was dropped rather than carried over. Line *length* still
+  reflects it: a half-length stub is an exit whose destination could not be resolved.
+
+---
+
 ## 3.5.1 — 2026-10-16
 
 ### Fixed

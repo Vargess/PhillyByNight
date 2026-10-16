@@ -155,10 +155,13 @@ An orange ring marks a haven — solid if claimed and open, dashed if unclaimed 
 locked. `▲`/`▼` show stairs up and down, and an amber number is the count of exits
 that lead somewhere unknown and can't be drawn (sewer "passage 1" and friends).
 
-Exit lines run solid to rooms you know and stop half-way as a stub where you
-haven't been. Red dashes mean locked or broken. Dotted coloured lines are transit
-routes learned from riding the train; a small coloured dot means that line continues
-on another floor.
+Exit lines use the same three colours as the footer — **green** open, **red** locked,
+**yellow** broken — with locked and broken also dashed. A line that stops half-way is
+one the script couldn't tie to a specific destination room; where both ends record
+each other, the two half-lines meet and read as a single connection.
+
+Dotted coloured lines are transit routes learned from riding the train; a small
+coloured dot means that line continues on another floor.
 
 ### Where rooms get placed
 

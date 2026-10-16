@@ -2,7 +2,7 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.5.1
+// @version      3.6.0
 // @match        https://philadelphiabynight.net/play*
 // @downloadURL  https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
 // @updateURL    https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
@@ -19,7 +19,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
-  const SCRIPT_VERSION = '3.5.1';
+  const SCRIPT_VERSION = '3.6.0';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now
@@ -53,6 +53,12 @@
     northeast: [1, 1, 0], northwest: [-1, 1, 0], southeast: [1, -1, 0], southwest: [-1, -1, 0],
     up: [0, 0, 1], down: [0, 0, -1]
   };
+
+  // One palette for exit state, used by both the footer list and the lines on the map
+  // so the same exit never reads two different ways.
+  const EXIT_OPEN = '#5fcf6a';
+  const EXIT_LOCKED = '#e8584a';
+  const EXIT_BROKEN = '#e8c547';
 
   // Compass order for listing exits, so they always read the same way round rather
   // than in whatever order the server happened to send them.
@@ -1705,7 +1711,7 @@
           const span = document.createElement('span');
           span.textContent = exitAbbr(e.direction);
           // Broken outranks locked: a locked door is a door, a broken one is a fault.
-          span.style.color = e.broken ? '#e8c547' : e.locked ? '#e8584a' : '#5fcf6a';
+          span.style.color = e.broken ? EXIT_BROKEN : e.locked ? EXIT_LOCKED : EXIT_OPEN;
           span.style.marginLeft = '6px';
           const target = e.targetRoomId != null ? rooms[idToKey[e.targetRoomId]] : null;
           span.title = cap(e.direction)
@@ -1871,11 +1877,16 @@
         // An exit whose destination we have never seen gets a short stub, so it reads as
         // "unexplored this way" instead of asserting a room sits there.
         const f = t.known ? 1 : 0.45;
+        // Same three colours as the footer, so an exit reads the same wherever you meet
+        // it. The old greys shaded by `t.known`, which sounds like "have we been there"
+        // but really means "did targetRoomId resolve" — absent on most older captures,
+        // so it would have painted nearly the whole surface as unexplored. Length still
+        // carries that: a short stub is an exit we could not resolve.
+        const stroke = e.broken ? EXIT_BROKEN : e.locked ? EXIT_LOCKED : EXIT_OPEN;
         const line = svgEl('line', {
           x1: r.x * CELL, y1: -r.y * CELL,
           x2: (r.x + (t.x - r.x) * f) * CELL, y2: -(r.y + (t.y - r.y) * f) * CELL,
-          stroke: danger ? '#c0392b' : (t.known ? '#888' : '#5a5a5a'),
-          'stroke-width': 2
+          stroke, 'stroke-width': 2
         });
         if (danger) line.setAttribute('stroke-dasharray', '3,3');
         g.appendChild(line);
