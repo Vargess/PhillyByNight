@@ -30,6 +30,11 @@
   const SAVE_DEBOUNCE_MS = 400;
   const UNKNOWN_LINE = 'Unknown line';
 
+  const AUTOSAVE_DB = 'pbn_mapper';
+  const AUTOSAVE_STORE = 'autosaves';
+  const AUTOSAVE_KEEP = 4;
+  const AUTOSAVE_INTERVAL_MS = 30 * 60 * 1000;
+
   const GRID_KEY_RE = /^-?\d+,-?\d+,-?\d+$/;
   const ID_KEY_RE = /^([A-Za-z][A-Za-z_]*)-(\d+)$/;
 
@@ -85,11 +90,110 @@
     if (roomsTimer === null) roomsTimer = setTimeout(flushRooms, SAVE_DEBOUNCE_MS);
   }
   const saveTransit = () => localStorage.setItem(TRANSIT_KEY, JSON.stringify(transitEdges));
-  const saveView = () => localStorage.setItem(VIEW_KEY, JSON.stringify({ floor: state.floor }));
+  const saveView = () => localStorage.setItem(VIEW_KEY,
+    JSON.stringify({ floor: state.floor, autoMinimize: state.autoMinimize }));
 
   function readJSON(key, fallback) {
     try { return JSON.parse(localStorage.getItem(key) || 'null') || fallback; }
     catch (e) { return fallback; }
+  }
+
+  // ------------------------------------------------------------- autosaves
+  //
+  // A rolling history of the whole map, taken every half hour and kept four deep.
+  // It lives in IndexedDB rather than on disk because a userscript has no way to
+  // delete a file it has written, so a disk-based history could only ever grow;
+  // here the oldest really is discarded. Snapshots can be written out individually
+  // from the Autosaves panel, and localStorage is too small to hold four of them.
+
+  let dbPromise = null;
+  function openAutosaveDB() {
+    if (dbPromise) return dbPromise;
+    dbPromise = new Promise((resolve, reject) => {
+      if (!window.indexedDB) { reject(new Error('IndexedDB unavailable')); return; }
+      const req = indexedDB.open(AUTOSAVE_DB, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(AUTOSAVE_STORE)) {
+          db.createObjectStore(AUTOSAVE_STORE, { keyPath: 'savedAt' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    // A failed open must not be cached forever — private windows can recover.
+    dbPromise.catch(() => { dbPromise = null; });
+    return dbPromise;
+  }
+
+  function autosaveTx(mode, run) {
+    return openAutosaveDB().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(AUTOSAVE_STORE, mode);
+      let result;
+      try { result = run(tx.objectStore(AUTOSAVE_STORE)); }
+      catch (e) { reject(e); return; }
+      tx.oncomplete = () => resolve(result && result.__req ? result.__req.result : result);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    }));
+  }
+  const wrap = (req) => ({ __req: req });
+
+  // Keys are timestamps, so IndexedDB hands them back oldest-first already.
+  const autosaveKeys = () => autosaveTx('readonly', (s) => wrap(s.getAllKeys()));
+  const autosaveAll = () => autosaveTx('readonly', (s) => wrap(s.getAll()))
+    .then((list) => list.slice().sort((a, b) => b.savedAt - a.savedAt));
+  const autosaveGet = (savedAt) => autosaveTx('readonly', (s) => wrap(s.get(savedAt)));
+
+  async function autosavePrune(keep) {
+    const keys = await autosaveKeys();
+    const doomed = keys.slice(0, Math.max(0, keys.length - keep));
+    if (!doomed.length) return 0;
+    await autosaveTx('readwrite', (s) => { doomed.forEach((k) => s.delete(k)); });
+    return doomed.length;
+  }
+
+  // The bundle an export writes, shared so an autosave and a manual export cannot drift.
+  function mapBundle() {
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      rooms,
+      transitEdges,
+      floorLabels: computeFloorLabels(),
+      exportedAt: new Date().toISOString()
+    };
+  }
+
+  async function autosaveNow(reason) {
+    const roomCount = Object.keys(rooms).length;
+    if (!roomCount) return null;        // never let an empty map evict real history
+    flushRooms();
+    const entry = { savedAt: Date.now(), roomCount, reason, bundle: mapBundle() };
+    try {
+      await autosaveTx('readwrite', (s) => { s.put(entry); });
+      const removed = await autosavePrune(AUTOSAVE_KEEP);
+      log(`autosaved ${roomCount} rooms (${reason})`, '#2ecc71',
+        { keeping: AUTOSAVE_KEEP, discarded: removed });
+      return entry;
+    } catch (e) {
+      log('autosave failed: ' + (e && e.message), '#e74c3c', e);
+      return null;
+    }
+  }
+
+  function autosaveStamp(ms) {
+    const d = new Date(ms);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+  }
+
+  function downloadJSON(obj, filename) {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   // ---------------------------------------------------------------- helpers
@@ -733,11 +837,86 @@
   // --------------------------------------------------------------------- UI
 
   const state = Object.assign(
-    { floor: null, scale: 1, panX: 0, panY: 0, collapsed: false, autoCenter: true, autoFloor: true },
+    {
+      floor: null, scale: 1, panX: 0, panY: 0, collapsed: false,
+      autoCenter: true, autoFloor: true, autoMinimize: true
+    },
     readJSON(VIEW_KEY, {})
   );
 
-  const ui = { g: null, svg: null, select: null, label: null };
+  const ui = { g: null, svg: null, select: null, label: null, setCollapsed: null };
+
+  // ------------------------------------------------- game-window auto-minimise
+  //
+  // The game opens /char, /inv, /inf, /craft, /mail, /xp and friends as in-page
+  // overlays, and the map panel sits on top of them. We cannot know their markup in
+  // advance, so match a tunable selector list first and otherwise fall back to a shape
+  // test: a large, high-z-index, fixed or absolutely positioned element that is not
+  // ours. Add a selector here if a particular window is missed.
+  const POPUP_SELECTORS = ['[role="dialog"]', '[aria-modal="true"]'];
+  const POPUP_MIN_Z = 100;
+  const POPUP_MIN_AREA = 0.18;   // fraction of the viewport it must cover
+
+  // Only panels WE minimised are restored, so a deliberate collapse is never undone.
+  let autoCollapsed = false;
+  let popupTimer = null;
+
+  function overlayVisible(el) {
+    if (!(el instanceof Element) || el.closest('#pbn-mapper')) return false;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  function looksLikeGameWindow(el) {
+    if (!overlayVisible(el)) return false;
+    const cs = getComputedStyle(el);
+    if (cs.position !== 'fixed' && cs.position !== 'absolute') return false;
+    const z = parseInt(cs.zIndex, 10);
+    if (!Number.isFinite(z) || z < POPUP_MIN_Z) return false;
+    const r = el.getBoundingClientRect();
+    return (r.width * r.height) / (window.innerWidth * window.innerHeight) >= POPUP_MIN_AREA;
+  }
+
+  function gameWindowOpen() {
+    for (const sel of POPUP_SELECTORS) {
+      for (const el of document.querySelectorAll(sel)) if (overlayVisible(el)) return true;
+    }
+    // Modals are almost always appended to <body>, so this stays cheap.
+    const kids = document.body ? document.body.children : [];
+    for (let i = 0; i < kids.length; i++) if (looksLikeGameWindow(kids[i])) return true;
+    return false;
+  }
+
+  function evaluateGameWindows() {
+    if (!ui.setCollapsed || !state.autoMinimize) return;
+    const open = gameWindowOpen();
+    if (open && !state.collapsed) { ui.setCollapsed(true); autoCollapsed = true; }
+    else if (!open && autoCollapsed) { ui.setCollapsed(false); autoCollapsed = false; }
+  }
+
+  function scheduleWindowCheck() {
+    if (popupTimer !== null) return;
+    popupTimer = setTimeout(() => { popupTimer = null; evaluateGameWindows(); }, 120);
+  }
+
+  function installGameWindowWatcher() {
+    const mo = new MutationObserver((records) => {
+      for (const rec of records) {
+        // Our own re-renders churn the SVG constantly; ignore them.
+        const t = rec.target;
+        if (t instanceof Element && t.closest('#pbn-mapper')) continue;
+        scheduleWindowCheck();
+        return;
+      }
+    });
+    mo.observe(document.body, {
+      childList: true, subtree: true,
+      attributes: true, attributeFilter: ['style', 'class', 'hidden', 'aria-hidden', 'open']
+    });
+    scheduleWindowCheck();
+  }
 
   function injectUI() {
     const root = document.createElement('div');
@@ -805,8 +984,27 @@
     const fitBtn = btn('⛶', 'Fit the whole of this floor in view');
     fitBtn.addEventListener('click', () => { fitFloor(); render(); });
 
-    const exportBtn = btn('⤓', 'Export map JSON');
-    exportBtn.addEventListener('click', exportMap);
+    // Put the panel back where it starts: top-right corner, default size, default zoom.
+    const dockBtn = btn('⇱', 'Dock to the top-right corner at the default size');
+    dockBtn.addEventListener('click', () => dockTopRight());
+
+    function dockTopRight() {
+      menu.style.display = 'none';
+      autoCollapsed = false;
+      setCollapsed(false);
+      root.style.width = `${initW}px`;
+      root.style.height = `${initH}px`;
+      root.style.left = `${Math.max(margin, window.innerWidth - initW - margin)}px`;
+      root.style.top = `${margin}px`;
+      root.style.right = 'auto';
+      root.style.bottom = 'auto';
+      root.style.resize = 'both';
+      state.scale = 1;
+      state.autoCenter = true;
+      state.autoFloor = true;
+      centerOnCurrent();
+      render();
+    }
 
     const importInput = document.createElement('input');
     importInput.type = 'file';
@@ -818,11 +1016,7 @@
       importInput.value = '';
     });
 
-    const importBtn = btn('⤒', 'Import map JSON (merges with current data)');
-    importBtn.addEventListener('click', () => importInput.click());
-
-    const clearEstimatedBtn = btn('⊘', 'Discard rooms whose position is only estimated — rooms confirmed against the grid are kept');
-    clearEstimatedBtn.addEventListener('click', () => {
+    function clearEstimated() {
       const n = Object.values(rooms).filter((r) => r.placement === 'reckoned').length;
       if (!n) { alert('No estimated-position rooms to clear — everything is anchored to the real grid.'); return; }
       if (confirm(`Discard ${n} room(s) whose position is only estimated? Confirmed rooms are kept. This cannot be undone.`)) {
@@ -831,24 +1025,165 @@
         flushRooms();
         render();
       }
-    });
+    }
 
-    const clearBtn = btn('✕', 'Clear saved map');
-    clearBtn.addEventListener('click', () => {
+    function clearAll() {
       if (confirm('Clear all saved map data? This cannot be undone.')) {
         rooms = {}; transitEdges = {}; currentKey = null; state.floor = null;
         rebuildIndexes();
         flushRooms(); saveTransit(); saveView();
         render();
       }
+    }
+
+    // Seven buttons already filled a 340px header; docking would have pushed the
+    // collapse control off the edge, so the occasional actions moved into a menu.
+    const menuBtn = btn('⋯', 'More actions');
+    const menu = document.createElement('div');
+    Object.assign(menu.style, {
+      position: 'absolute', top: '30px', right: '6px', zIndex: '2',
+      background: '#23232a', border: '1px solid #555', borderRadius: '6px',
+      boxShadow: '0 6px 18px rgba(0,0,0,0.6)', padding: '4px', display: 'none'
     });
+    const menuItem = (label, fn) => {
+      const it = document.createElement('div');
+      it.textContent = label;
+      Object.assign(it.style, {
+        padding: '5px 8px', borderRadius: '4px', cursor: 'pointer',
+        font: '11px sans-serif', color: '#eee', whiteSpace: 'nowrap'
+      });
+      it.addEventListener('mouseenter', () => { it.style.background = '#3a3a42'; });
+      it.addEventListener('mouseleave', () => { it.style.background = 'transparent'; });
+      it.addEventListener('click', () => { menu.style.display = 'none'; fn(); });
+      menu.appendChild(it);
+      return it;
+    };
+    menuItem('Export map JSON', exportMap);
+    menuItem('Import map JSON…', () => importInput.click());
+    menuItem('Autosaves…', () => openAutosavePanel());
+    menuItem('Discard estimated-position rooms', clearEstimated);
+    menuItem('Clear saved map', clearAll);
+    const autoMinItem = menuItem('', () => {
+      state.autoMinimize = !state.autoMinimize;
+      saveView();
+      syncAutoMinLabel();
+      if (!state.autoMinimize && autoCollapsed) { setCollapsed(false); autoCollapsed = false; }
+      else if (state.autoMinimize) scheduleWindowCheck();
+    });
+    function syncAutoMinLabel() {
+      autoMinItem.textContent =
+        (state.autoMinimize ? '✓ ' : ' ') + 'Minimise while a game window is open';
+    }
+    syncAutoMinLabel();
+
+    menuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    });
+    window.addEventListener('mousedown', (e) => {
+      if (menu.style.display !== 'none' && !menu.contains(e.target) && e.target !== menuBtn) {
+        menu.style.display = 'none';
+      }
+    });
+
+    // Autosaves panel: the rolling history, with a way to write any snapshot to disk
+    // or roll the live map back to it.
+    const autoPanel = document.createElement('div');
+    Object.assign(autoPanel.style, {
+      position: 'absolute', top: '30px', right: '6px', left: '6px', zIndex: '3',
+      background: '#23232a', border: '1px solid #555', borderRadius: '6px',
+      boxShadow: '0 6px 18px rgba(0,0,0,0.6)', padding: '8px', display: 'none',
+      font: '11px sans-serif', color: '#eee', maxHeight: '75%', overflowY: 'auto'
+    });
+
+    const panelRow = () => {
+      const d = document.createElement('div');
+      Object.assign(d.style, { display: 'flex', alignItems: 'center', gap: '6px', padding: '3px 0' });
+      return d;
+    };
+
+    async function openAutosavePanel() {
+      menu.style.display = 'none';
+      autoPanel.style.display = 'block';
+      autoPanel.textContent = 'Loading…';
+      try {
+        renderAutosaves(await autosaveAll());
+      } catch (e) {
+        autoPanel.textContent = '';
+        const msg = document.createElement('div');
+        msg.textContent = 'Autosaves unavailable: ' + (e && e.message);
+        msg.style.color = '#e8a530';
+        const close = btn('Close', '');
+        close.addEventListener('click', () => { autoPanel.style.display = 'none'; });
+        autoPanel.append(msg, close);
+      }
+    }
+
+    function renderAutosaves(list) {
+      autoPanel.textContent = '';
+      const head = document.createElement('div');
+      head.textContent = `Autosaves — newest ${AUTOSAVE_KEEP} kept, one every ${AUTOSAVE_INTERVAL_MS / 60000} min`;
+      Object.assign(head.style, { fontWeight: 'bold', marginBottom: '4px' });
+      autoPanel.appendChild(head);
+
+      if (!list.length) {
+        const none = document.createElement('div');
+        none.textContent = 'No snapshots yet — the first is taken half an hour after the map loads.';
+        none.style.color = '#aaa';
+        autoPanel.appendChild(none);
+      }
+
+      list.forEach((e) => {
+        const row = panelRow();
+        const when = document.createElement('span');
+        when.textContent = `${new Date(e.savedAt).toLocaleString()} · ${e.roomCount} rooms`;
+        when.style.flex = '1';
+        when.style.whiteSpace = 'nowrap';
+
+        const dl = btn('⤓', 'Save this snapshot to your downloads');
+        dl.addEventListener('click', async () => {
+          const full = await autosaveGet(e.savedAt);
+          if (full) downloadJSON(full.bundle, `PbnMapper-autosave-${autosaveStamp(e.savedAt)}.json`);
+        });
+
+        const restore = btn('⟲', 'Replace the current map with this snapshot');
+        restore.addEventListener('click', async () => {
+          if (!confirm(`Replace the current map (${Object.keys(rooms).length} rooms) with this `
+            + `snapshot (${e.roomCount} rooms)? This cannot be undone.`)) return;
+          const full = await autosaveGet(e.savedAt);
+          if (!full) return;
+          rooms = migrateAll(full.bundle.rooms || {});
+          transitEdges = migrateTransit(full.bundle.transitEdges || {});
+          currentKey = null;
+          rebuildIndexes();
+          anchorFloatingIslands();
+          rebuildIndexes();
+          flushRooms();
+          saveTransit();
+          autoPanel.style.display = 'none';
+          render();
+        });
+
+        row.append(when, dl, restore);
+        autoPanel.appendChild(row);
+      });
+
+      const actions = panelRow();
+      const snapNow = btn('Snapshot now', 'Take an autosave immediately');
+      snapNow.addEventListener('click', async () => { await autosaveNow('manual'); openAutosavePanel(); });
+      const close = btn('Close', '');
+      close.addEventListener('click', () => { autoPanel.style.display = 'none'; });
+      actions.append(snapNow, close);
+      autoPanel.appendChild(actions);
+    }
 
     const collapseBtn = btn('_', 'Collapse/expand');
     let expandedHeight = root.style.height;
     let expandedWidth = root.style.width;
-    collapseBtn.addEventListener('click', () => {
-      state.collapsed = !state.collapsed;
-      if (state.collapsed) {
+    function setCollapsed(next) {
+      if (next === state.collapsed) return;
+      state.collapsed = next;
+      if (next) {
         expandedHeight = root.style.height;
         expandedWidth = root.style.width;
         body.style.display = 'none';
@@ -860,9 +1195,14 @@
         root.style.width = expandedWidth;
         root.style.resize = 'both';
       }
+    }
+    collapseBtn.addEventListener('click', () => {
+      autoCollapsed = false;   // a deliberate toggle takes the panel off auto-control
+      setCollapsed(!state.collapsed);
     });
+    ui.setCollapsed = setCollapsed;
 
-    header.append(title, floorSelect, recenterBtn, fitBtn, exportBtn, importBtn, importInput, clearEstimatedBtn, clearBtn, collapseBtn);
+    header.append(title, floorSelect, recenterBtn, fitBtn, dockBtn, menuBtn, importInput, collapseBtn);
 
     const body = document.createElement('div');
     body.style.flex = '1';
@@ -884,7 +1224,7 @@
     });
     body.appendChild(roomLabel);
 
-    root.append(header, body);
+    root.append(header, body, menu, autoPanel);
     document.body.appendChild(root);
 
     ui.g = g; ui.svg = svg; ui.select = floorSelect; ui.label = roomLabel;
@@ -894,6 +1234,8 @@
     new ResizeObserver(() => { clampPanelToViewport(root); render(); }).observe(root);
     window.addEventListener('resize', () => { clampPanelToViewport(root); render(); });
     window.addEventListener('beforeunload', flushRooms);
+    installGameWindowWatcher();
+    setInterval(() => { autosaveNow('every 30 min'); }, AUTOSAVE_INTERVAL_MS);
 
     listeners.push(() => {
       const labels = computeFloorLabels();
@@ -1279,19 +1621,7 @@
 
   function exportMap() {
     flushRooms();
-    const bundle = {
-      schemaVersion: SCHEMA_VERSION,
-      rooms,
-      transitEdges,
-      floorLabels: computeFloorLabels(),
-      exportedAt: new Date().toISOString()
-    };
-    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'pbn-map.json';
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadJSON(mapBundle(), 'pbn-map.json');
   }
 
   function mergeRoom(existing, incoming) {
