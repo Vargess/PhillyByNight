@@ -856,7 +856,6 @@
 
     const placed = resolvePlacement(data, id, prev, direction);
     const existing = rooms[placed.key] || (id != null && idToKey[id] ? rooms[idToKey[id]] : null);
-    const firstVisit = !(existing && existing.visited);
     const movedRoom = currentKey !== placed.key;
 
     // Re-keying (an id-addressed room that turned out to have a real cell) must not
@@ -888,10 +887,12 @@
     // A sweep belongs to the room it was started in. Walking out mid-way would send the
     // rest of the searches wherever we have just arrived, so abandon it on any move.
     if (movedRoom) stopExplore('left the room');
-    // Only somewhere genuinely new is worth the sixteen seconds; a room already searched
-    // would otherwise be swept again every time it is walked through.
-    if (movedRoom && firstVisit && state.autoExplore && !rec.isVehicle) {
-      startExplore('auto — first visit to ' + rec.key);
+    // Every arrival is swept, not just the first: the game gains new content over time,
+    // so a room searched last week can have exits it did not have then. Gated on the key
+    // actually changing, because a sweep's own "inspect" can trigger another roomUpdate
+    // for the room we are standing in, which would otherwise restart it forever.
+    if (movedRoom && state.autoExplore && !rec.isVehicle) {
+      startExplore('auto — arrived at ' + rec.key);
     }
 
     saveRooms();
