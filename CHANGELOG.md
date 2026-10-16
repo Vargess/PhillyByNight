@@ -8,6 +8,27 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 3.6.1 — 2026-10-16
+
+### Fixed
+- **The update check stopped explaining itself and started working.** 3.5.1 made the
+  CSP failure report accurately, but it still reported one every single time, because
+  the game's `connect-src` will never permit a request to GitHub. The menu item is now
+  **Open the update page…** and goes straight there: navigation isn't governed by
+  `connect-src`, and Tampermonkey's install page states the published version, shows
+  the diff and waits for confirmation — everything the comparison was for.
+- The page is opened synchronously inside the click. Previously `window.open` ran after
+  an `await`, by which point the user gesture had expired and a popup blocker could
+  swallow it silently. If one still blocks it, the URL is shown instead.
+
+### Notes
+- `GM_xmlhttpRequest` would bypass the policy, but requires an `@grant`, and any
+  `@grant` moves the script into Tampermonkey's sandbox where `window` is no longer the
+  page's — the WebSocket hook that records every room would stop working. Not worth it
+  for a version string.
+
+---
+
 ## 3.6.0 — 2026-10-16
 
 ### Changed

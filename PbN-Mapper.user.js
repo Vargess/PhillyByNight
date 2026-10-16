@@ -2,7 +2,7 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.6.0
+// @version      3.6.1
 // @match        https://philadelphiabynight.net/play*
 // @downloadURL  https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
 // @updateURL    https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
@@ -19,7 +19,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
-  const SCRIPT_VERSION = '3.6.0';
+  const SCRIPT_VERSION = '3.6.1';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now
@@ -85,97 +85,30 @@
   // ----------------------------------------------------------------- updates
   //
   // Checking is deliberately something you ask for, never something that happens on
-  // its own. This only ever *reads* the published file and compares version strings;
-  // installing stays with Tampermonkey's own confirmation page, which shows the diff
-  // and waits for you. Nothing here can replace the running script.
+  // its own, and nothing here can replace the running script — installing stays with
+  // Tampermonkey's own confirmation page, which shows the diff and waits for you.
   //
-  // raw.githubusercontent.com sends Access-Control-Allow-Origin: *, so a plain fetch
-  // works and no GM_* grant is needed — which matters, because any @grant would move
-  // the script out of page context and break the WebSocket hook entirely.
+  // The game serves connect-src 'self' wss: ws: plus its own CDN and Google. GitHub is
+  // not on that list, so fetch and XHR to it are refused outright; raw.githubusercontent
+  // .com allowing all origins makes no difference, since the page's policy is checked
+  // first. GM_xmlhttpRequest would bypass it, but needs an @grant, and any @grant moves
+  // the script into Tampermonkey's sandbox where `window` is no longer the page's — the
+  // WebSocket hook that records every room would stop working.
   const UPDATE_URL =
     'https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js';
 
-  function parsePublishedVersion(text) {
-    const m = /^\/\/\s*@version\s+(.+)$/m.exec(text || '');
-    return m ? m[1].trim() : null;
-  }
-
-  function compareVersions(a, b) {
-    const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
-    const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      const x = pa[i] || 0, y = pb[i] || 0;
-      if (x !== y) return x < y ? -1 : 1;
-    }
-    return 0;
-  }
-
-  function openInstallPage(why) {
-    logEvent('update', 'opened install page', { why });
-    window.open(UPDATE_URL, '_blank', 'noopener');
-  }
-
-  async function checkForUpdate() {
-    let text;
-    // The game's Content-Security-Policy lists connect-src 'self' wss: ws: plus its own
-    // CDN and Google — GitHub is not on it, so this fetch is refused outright. Firefox
-    // surfaces that as a bare "NetworkError", indistinguishable from being offline, so
-    // watch for the violation event and say which it actually was.
-    let blockedByCSP = false;
-    const onViolation = (ev) => {
-      if (ev.effectiveDirective === 'connect-src' || ev.violatedDirective === 'connect-src') {
-        blockedByCSP = true;
-      }
-    };
-    document.addEventListener('securitypolicyviolation', onViolation);
-    try {
-      // The raw host caches for five minutes; bypass it so a fresh push is seen.
-      const res = await fetch(`${UPDATE_URL}?t=${Date.now()}`, { cache: 'no-store' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      text = await res.text();
-    } catch (e) {
-      // The violation event is dispatched a tick after the fetch rejects, so give it
-      // one before deciding which failure this was.
-      await new Promise((r) => setTimeout(r, 60));
-      logEvent('update', 'check failed', { error: e && e.message, blockedByCSP });
-      const reason = blockedByCSP
-        ? 'The game page\'s security policy does not allow the script to contact GitHub '
-          + 'directly, so the version cannot be compared from here.'
-        : 'GitHub could not be reached: ' + (e && e.message);
-      if (confirm(`${reason}\n\nOpen the install page instead? Tampermonkey will show `
-        + `you the published version and offer to update if it is newer than your `
-        + `${SCRIPT_VERSION}.\n\nYour map and autosaves are not affected.`)) {
-        openInstallPage(blockedByCSP ? 'csp-blocked' : 'network-failed');
-      }
-      return;
-    } finally {
-      document.removeEventListener('securitypolicyviolation', onViolation);
-    }
-
-    const latest = parsePublishedVersion(text);
-    if (!latest) {
-      logEvent('update', 'no version in published file');
-      alert('Fetched the published script but could not read a version from it.');
-      return;
-    }
-
-    const cmp = compareVersions(SCRIPT_VERSION, latest);
-    logEvent('update', 'checked', { running: SCRIPT_VERSION, published: latest });
-
-    if (cmp > 0) {
-      alert(`You are running ${SCRIPT_VERSION}, which is newer than the published `
-        + `${latest}. Nothing to do.`);
-      return;
-    }
-    if (cmp === 0) {
-      alert(`PbN Mapper ${SCRIPT_VERSION} is up to date.`);
-      return;
-    }
-    if (confirm(`PbN Mapper ${latest} is available — you have ${SCRIPT_VERSION}.\n\n`
-      + 'Open the install page? Tampermonkey shows you what changed and asks you to '
-      + 'confirm; nothing is installed until you do.\n\nYour map and autosaves are '
-      + 'stored separately and are not affected by updating.')) {
-      openInstallPage(`${SCRIPT_VERSION} -> ${latest}`);
+  // Comparing versions from here is not possible and never will be while the policy
+  // stands, so there is nothing to gain by trying and reporting the failure each time.
+  // Go straight to Tampermonkey's install page: navigation is not governed by
+  // connect-src, and that page states the published version and offers the update
+  // itself. Opened synchronously inside the click, because a window.open issued after
+  // an await has lost the user gesture and gets eaten by the popup blocker.
+  function checkForUpdate() {
+    logEvent('update', 'opened install page', { running: SCRIPT_VERSION });
+    const win = window.open(UPDATE_URL, '_blank', 'noopener');
+    if (!win) {
+      alert('The update page was blocked from opening.\n\nAllow pop-ups for this site, '
+        + 'or open it yourself:\n' + UPDATE_URL);
     }
   }
 
@@ -1508,7 +1441,7 @@
     });
 
     menu.appendChild(sep2);
-    menuItem(`Check for updates  (v${SCRIPT_VERSION})`, () => checkForUpdate());
+    menuItem(`Open the update page…  (v${SCRIPT_VERSION})`, () => checkForUpdate());
 
     function syncToggleLabels() {
       const mark = (on) => (on ? '✓ ' : ' ');

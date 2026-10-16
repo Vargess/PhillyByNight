@@ -63,16 +63,15 @@ line endings, which changes the hash. CHECKSUMS.md explains how to check a clone
 
 ### Updating
 
-The script can check for a new version, but only when you ask it to:
-**`⋯` → Check for updates**. It offers to open Tampermonkey's install page, which
-shows you the published version and what changed, and waits for you to confirm. The
-script only ever *reads*; it can't replace itself.
+Updating happens only when you ask: **`⋯` → Open the update page…**, which shows your
+running version in the menu. It opens Tampermonkey's install page, which states the
+published version, shows what changed, and waits for you to confirm. The script itself
+can't install anything.
 
-The game page's security policy (`connect-src`) doesn't allow the script to contact
-GitHub directly, so it usually can't compare version numbers before opening that page
-— Tampermonkey tells you instead, once the page is open. If the policy ever changes,
-the check will compare versions first and only offer the page when there's genuinely
-something newer.
+It opens that page rather than comparing version numbers in the background because the
+game's security policy (`connect-src`) forbids the script from contacting GitHub at
+all. Tampermonkey's page isn't subject to that policy, so it can tell you what you'd
+be getting.
 
 **Your map data survives** updating — it's stored separately from the script.
 
