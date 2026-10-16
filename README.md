@@ -49,6 +49,18 @@ If the link opens as plain text instead, Tampermonkey isn't intercepting `.user.
 files. Copy the whole file, open the Tampermonkey dashboard, press **+** to create a
 new script, select all, paste over it and save.
 
+### Verifying what you downloaded
+
+[CHECKSUMS.md](CHECKSUMS.md) lists SHA-256 hashes for the two files that execute, so
+you can confirm your copy matches the published one:
+
+```powershell
+Get-FileHash .\PbN-Mapper.user.js -Algorithm SHA256
+```
+
+Hash the file as downloaded from the raw link — a `git clone` on Windows rewrites
+line endings, which changes the hash. CHECKSUMS.md explains how to check a clone.
+
 ### Updating
 
 The script carries no auto-update URL, so Tampermonkey won't update it for you.
