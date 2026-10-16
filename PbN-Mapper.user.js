@@ -1154,7 +1154,7 @@
     fitBtn.addEventListener('click', () => { fitFloor(); render(); });
 
     // Put the panel back where it starts: top-right corner, default size, default zoom.
-    const dockBtn = btn('⇱', 'Dock to the top-right corner at the default size');
+    const dockBtn = btn('↗', 'Dock to the top-right corner at the default size');
     dockBtn.addEventListener('click', () => dockTopRight());
 
     function dockTopRight() {
