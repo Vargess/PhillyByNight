@@ -2,7 +2,7 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.0.0
+// @version      3.1.0
 // @match        https://philadelphiabynight.net/play*
 // @run-at       document-start
 // @grant        none
@@ -17,6 +17,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
+  const SCRIPT_VERSION = '3.1.0';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now
@@ -31,9 +32,15 @@
   const UNKNOWN_LINE = 'Unknown line';
 
   const AUTOSAVE_DB = 'pbn_mapper';
+  const DB_VERSION = 2;
   const AUTOSAVE_STORE = 'autosaves';
   const AUTOSAVE_KEEP = 4;
   const AUTOSAVE_INTERVAL_MS = 30 * 60 * 1000;
+
+  const LOG_STORE = 'activity';
+  const LOG_MAX = 5000;           // entries kept; oldest trimmed away
+  const LOG_DETAIL_MAX = 2000;    // characters of payload kept per entry
+  const LOG_FLUSH_MS = 2000;
 
   const GRID_KEY_RE = /^-?\d+,-?\d+,-?\d+$/;
   const ID_KEY_RE = /^([A-Za-z][A-Za-z_]*)-(\d+)$/;
@@ -45,10 +52,11 @@
     up: [0, 0, 1], down: [0, 0, -1]
   };
 
-  const log = (msg, color, data) =>
-    (data === undefined
-      ? console.log(`%c[pbn-mapper] ${msg}`, `color:${color}`)
-      : console.log(`%c[pbn-mapper] ${msg}`, `color:${color}`, data));
+  const log = (msg, color, data) => {
+    if (data === undefined) console.log(`%c[pbn-mapper] ${msg}`, `color:${color}`);
+    else console.log(`%c[pbn-mapper] ${msg}`, `color:${color}`, data);
+    logEvent('mapper', msg, data);
+  };
 
   // ------------------------------------------------------------- data model
   //
@@ -90,8 +98,10 @@
     if (roomsTimer === null) roomsTimer = setTimeout(flushRooms, SAVE_DEBOUNCE_MS);
   }
   const saveTransit = () => localStorage.setItem(TRANSIT_KEY, JSON.stringify(transitEdges));
-  const saveView = () => localStorage.setItem(VIEW_KEY,
-    JSON.stringify({ floor: state.floor, autoMinimize: state.autoMinimize }));
+  const saveView = () => localStorage.setItem(VIEW_KEY, JSON.stringify({
+    floor: state.floor, autoMinimize: state.autoMinimize,
+    logEnabled: logEnabled, logChatText: logChatText
+  }));
 
   function readJSON(key, fallback) {
     try { return JSON.parse(localStorage.getItem(key) || 'null') || fallback; }
@@ -107,30 +117,44 @@
   // from the Autosaves panel, and localStorage is too small to hold four of them.
 
   let dbPromise = null;
-  function openAutosaveDB() {
+  function openDB() {
     if (dbPromise) return dbPromise;
     dbPromise = new Promise((resolve, reject) => {
       if (!window.indexedDB) { reject(new Error('IndexedDB unavailable')); return; }
-      const req = indexedDB.open(AUTOSAVE_DB, 1);
+      const req = indexedDB.open(AUTOSAVE_DB, DB_VERSION);
+      // Additive only: an existing database keeps its autosaves across the bump.
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains(AUTOSAVE_STORE)) {
           db.createObjectStore(AUTOSAVE_STORE, { keyPath: 'savedAt' });
         }
+        if (!db.objectStoreNames.contains(LOG_STORE)) {
+          db.createObjectStore(LOG_STORE, { autoIncrement: true });
+        }
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        const db = req.result;
+        // If another tab later needs to upgrade, step out of its way rather than
+        // blocking it: drop the handle so the next call reopens at the new version.
+        db.onversionchange = () => { db.close(); dbPromise = null; };
+        resolve(db);
+      };
       req.onerror = () => reject(req.error);
+      // Without this an upgrade held open by a second tab never settles either way,
+      // and autosaving and logging would stop for good with no visible error.
+      req.onblocked = () => reject(new Error(
+        'another tab has the map database open at an older version — reload that tab'));
     });
     // A failed open must not be cached forever — private windows can recover.
     dbPromise.catch(() => { dbPromise = null; });
     return dbPromise;
   }
 
-  function autosaveTx(mode, run) {
-    return openAutosaveDB().then((db) => new Promise((resolve, reject) => {
-      const tx = db.transaction(AUTOSAVE_STORE, mode);
+  function dbTx(storeName, mode, run) {
+    return openDB().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, mode);
       let result;
-      try { result = run(tx.objectStore(AUTOSAVE_STORE)); }
+      try { result = run(tx.objectStore(storeName)); }
       catch (e) { reject(e); return; }
       tx.oncomplete = () => resolve(result && result.__req ? result.__req.result : result);
       tx.onerror = () => reject(tx.error);
@@ -138,6 +162,7 @@
     }));
   }
   const wrap = (req) => ({ __req: req });
+  const autosaveTx = (mode, run) => dbTx(AUTOSAVE_STORE, mode, run);
 
   // Keys are timestamps, so IndexedDB hands them back oldest-first already.
   const autosaveKeys = () => autosaveTx('readonly', (s) => wrap(s.getAllKeys()));
@@ -194,6 +219,111 @@
     a.href = url; a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  // ---------------------------------------------------------- activity log
+  //
+  // A rolling record of what the game sent, what the script made of it, and anything
+  // that threw — so a problem noticed mid-play can be exported afterwards and read
+  // back. Entries are buffered and written in batches; the newest LOG_MAX survive.
+  //
+  // Private chat is deliberately NOT recorded. The script only ever acts on system
+  // messages, so those are kept verbatim while every other chat line has its text
+  // replaced by a length marker. "Record chat text" turns that off if a chat-related
+  // bug actually needs the words.
+
+  const logBuffer = [];
+  let logFlushTimer = null;
+  let logDropped = 0;
+  // Module-level rather than on `state`, because boot logs a line before `state` exists.
+  let logEnabled = true;
+  let logChatText = false;
+
+  function truncate(s, max) {
+    s = String(s);
+    return s.length > max ? s.slice(0, max) + `…[+${s.length - max} more chars]` : s;
+  }
+
+  function safeJSON(v) {
+    try { return truncate(JSON.stringify(v), LOG_DETAIL_MAX); }
+    catch (e) { return '[unserialisable: ' + (e && e.message) + ']'; }
+  }
+
+  function logEvent(kind, event, detail) {
+    if (!logEnabled) return;
+    logBuffer.push({
+      t: Date.now(),
+      kind,
+      event: String(event),
+      detail: detail === undefined ? null
+        : (typeof detail === 'string' ? truncate(detail, LOG_DETAIL_MAX) : safeJSON(detail))
+    });
+    if (logBuffer.length >= 200) { flushLog(); return; }
+    if (logFlushTimer === null) logFlushTimer = setTimeout(flushLog, LOG_FLUSH_MS);
+  }
+
+  async function flushLog() {
+    clearTimeout(logFlushTimer);
+    logFlushTimer = null;
+    if (!logBuffer.length) return;
+    const batch = logBuffer.splice(0, logBuffer.length);
+    try {
+      await dbTx(LOG_STORE, 'readwrite', (s) => { batch.forEach((e) => s.add(e)); });
+      await trimLog();
+    } catch (e) {
+      logDropped += batch.length;
+      console.warn('[pbn-mapper] activity log write failed', e);
+    }
+  }
+
+  async function trimLog() {
+    const keys = await dbTx(LOG_STORE, 'readonly', (s) => wrap(s.getAllKeys()));
+    const doomed = keys.slice(0, Math.max(0, keys.length - LOG_MAX));
+    if (!doomed.length) return;
+    await dbTx(LOG_STORE, 'readwrite', (s) => { doomed.forEach((k) => s.delete(k)); });
+  }
+
+  const logAll = () => dbTx(LOG_STORE, 'readonly', (s) => wrap(s.getAll()));
+  const logClear = () => dbTx(LOG_STORE, 'readwrite', (s) => { s.clear(); });
+
+  // Chat other than the system line the mapper reads is never written out verbatim.
+  function sanitizeForLog(event, payload) {
+    if (event !== 'chat-message' || logChatText) return payload;
+    if (!payload || typeof payload !== 'object' || payload.type === 'system') return payload;
+    const copy = Object.assign({}, payload);
+    ['text', 'message', 'body'].forEach((f) => {
+      if (typeof copy[f] === 'string') copy[f] = `[${copy[f].length} chars withheld]`;
+    });
+    return copy;
+  }
+
+  async function exportLog() {
+    await flushLog();
+    let entries = [];
+    try { entries = await logAll(); }
+    catch (e) { alert('Could not read the activity log: ' + (e && e.message)); return; }
+    const placement = {};
+    Object.values(rooms).forEach((r) => {
+      const p = r.placement || 'unplaced';
+      placement[p] = (placement[p] || 0) + 1;
+    });
+    downloadJSON({
+      kind: 'pbn-mapper-activity-log',
+      scriptVersion: SCRIPT_VERSION,
+      schemaVersion: SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      url: location.href,
+      userAgent: navigator.userAgent,
+      chatTextRecorded: logChatText,
+      entriesDroppedOnWriteFailure: logDropped,
+      map: { rooms: Object.keys(rooms).length, currentKey, placement },
+      view: {
+        floor: state.floor, scale: state.scale, collapsed: state.collapsed,
+        autoMinimize: state.autoMinimize
+      },
+      entryCount: entries.length,
+      entries
+    }, `PbnMapper-log-${autosaveStamp(Date.now())}.json`);
   }
 
   // ---------------------------------------------------------------- helpers
@@ -789,25 +919,45 @@
   window.WebSocket = new Proxy(OrigWS, {
     construct(target, args) {
       const ws = new target(...args);
+      logEvent('socket', 'open', { url: args[0] });
+      ws.addEventListener('close', (e) => logEvent('socket', 'close', { code: e.code, reason: e.reason }));
+      ws.addEventListener('error', () => logEvent('socket', 'error'));
+
       ws.addEventListener('message', (e) => {
         const raw = e.data;
-        if (typeof raw !== 'string' || !raw.startsWith('42[')) return;
+        if (typeof raw !== 'string') { logEvent('ws-in', 'binary frame', { bytes: raw && raw.size }); return; }
+        // socket.io heartbeats carry nothing worth keeping and would swamp the log.
+        if (raw === '2' || raw === '3') return;
+        if (!raw.startsWith('42[')) { logEvent('ws-in', 'raw frame', raw); return; }
+
         let event, payload;
         // Only the parse is allowed to fail quietly — a bug in the mapper itself should
         // surface in the console, not vanish.
-        try { [event, payload] = JSON.parse(raw.slice(2)); } catch (err) { return; }
+        try { [event, payload] = JSON.parse(raw.slice(2)); }
+        catch (err) { logEvent('ws-in', 'unparseable 42 frame', raw); return; }
+
+        // Everything the game sends is recorded, not just the two events acted on, so a
+        // missed room or a renamed field is visible in the log afterwards.
+        logEvent('ws-in', event, sanitizeForLog(event, payload));
+
         if (event === 'roomUpdate' && payload && payload.key) {
           log('roomUpdate', '#4ecdc4', payload);
-          upsertVisited(payload);
+          try { upsertVisited(payload); }
+          catch (err) {
+            logEvent('error', 'upsertVisited threw', { message: err && err.message, stack: err && err.stack, key: payload.key });
+            throw err;
+          }
         } else if (event === 'chat-message' && payload && payload.type === 'system' && typeof payload.text === 'string') {
           handleSystemMessage(payload.text);
         }
       });
+
       const origSend = ws.send.bind(ws);
       ws.send = (data) => {
         if (typeof data === 'string' && data.startsWith('42[')) {
           try {
             const [event, arg] = JSON.parse(data.slice(2));
+            logEvent('ws-out', event, arg);
             if (event === 'move' && typeof arg === 'string') pushPending(arg);
           } catch (err) { /* not a payload we care about */ }
         }
@@ -815,6 +965,21 @@
       };
       return ws;
     }
+  });
+
+  // Page context, so this catches the game's own exceptions too — which is usually
+  // exactly what is wanted when "something didn't work".
+  window.addEventListener('error', (e) => {
+    logEvent('error', e.message || 'script error', {
+      source: e.filename, line: e.lineno, col: e.colno,
+      stack: e.error && e.error.stack ? truncate(String(e.error.stack), 1200) : null
+    });
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const r = e.reason;
+    logEvent('error', 'unhandled promise rejection', {
+      reason: truncate(String((r && r.stack) || r), 1200)
+    });
   });
 
   // ------------------------------------------------------------------- boot
@@ -843,6 +1008,10 @@
     },
     readJSON(VIEW_KEY, {})
   );
+  // The log flags live outside `state` because boot writes a log line before `state`
+  // exists; adopt whatever was persisted now that it does.
+  logEnabled = state.logEnabled !== false;
+  logChatText = !!state.logChatText;
 
   const ui = { g: null, svg: null, select: null, label: null, setCollapsed: null };
 
@@ -1066,15 +1235,40 @@
     const autoMinItem = menuItem('', () => {
       state.autoMinimize = !state.autoMinimize;
       saveView();
-      syncAutoMinLabel();
+      syncToggleLabels();
       if (!state.autoMinimize && autoCollapsed) { setCollapsed(false); autoCollapsed = false; }
       else if (state.autoMinimize) scheduleWindowCheck();
     });
-    function syncAutoMinLabel() {
-      autoMinItem.textContent =
-        (state.autoMinimize ? '✓ ' : ' ') + 'Minimise while a game window is open';
+
+    const sep = document.createElement('div');
+    Object.assign(sep.style, { borderTop: '1px solid #3a3a42', margin: '4px 2px' });
+    menu.appendChild(sep);
+
+    menuItem('Log to file', () => exportLog());
+    const logItem = menuItem('', () => {
+      logEnabled = !logEnabled;
+      saveView();
+      syncToggleLabels();
+      logEvent('ui', 'activity log enabled');
+    });
+    const chatItem = menuItem('', () => {
+      logChatText = !logChatText;
+      saveView();
+      syncToggleLabels();
+    });
+    menuItem('Clear activity log', async () => {
+      if (!confirm('Discard the recorded activity log?')) return;
+      logBuffer.length = 0;
+      try { await logClear(); } catch (e) { /* nothing to clear */ }
+    });
+
+    function syncToggleLabels() {
+      const mark = (on) => (on ? '✓ ' : ' ');
+      autoMinItem.textContent = mark(state.autoMinimize) + 'Minimise while a game window is open';
+      logItem.textContent = mark(logEnabled) + 'Record activity log';
+      chatItem.textContent = mark(logChatText) + 'Include chat text in the log';
     }
-    syncAutoMinLabel();
+    syncToggleLabels();
 
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1233,7 +1427,7 @@
     makePannable(svg, body);
     new ResizeObserver(() => { clampPanelToViewport(root); render(); }).observe(root);
     window.addEventListener('resize', () => { clampPanelToViewport(root); render(); });
-    window.addEventListener('beforeunload', flushRooms);
+    window.addEventListener('beforeunload', () => { flushRooms(); flushLog(); });
     installGameWindowWatcher();
     setInterval(() => { autosaveNow('every 30 min'); }, AUTOSAVE_INTERVAL_MS);
 
