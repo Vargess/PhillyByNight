@@ -2,7 +2,7 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.4.0
+// @version      3.5.0
 // @match        https://philadelphiabynight.net/play*
 // @downloadURL  https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
 // @updateURL    https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
@@ -19,7 +19,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
-  const SCRIPT_VERSION = '3.4.0';
+  const SCRIPT_VERSION = '3.5.0';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now
@@ -53,6 +53,22 @@
     northeast: [1, 1, 0], northwest: [-1, 1, 0], southeast: [1, -1, 0], southwest: [-1, -1, 0],
     up: [0, 0, 1], down: [0, 0, -1]
   };
+
+  // Compass order for listing exits, so they always read the same way round rather
+  // than in whatever order the server happened to send them.
+  const DIR_ORDER = ['north', 'northeast', 'east', 'southeast',
+    'south', 'southwest', 'west', 'northwest', 'up', 'down'];
+  const DIR_ABBR = {
+    north: 'N', northeast: 'NE', east: 'E', southeast: 'SE',
+    south: 'S', southwest: 'SW', west: 'W', northwest: 'NW', up: 'U', down: 'D'
+  };
+
+  function exitAbbr(dir) {
+    if (DIR_ABBR[dir]) return DIR_ABBR[dir];
+    const p = /^passage\s*(\d+)$/i.exec(dir || '');
+    if (p) return 'P' + p[1];                       // sewer "passage 3" -> P3
+    return String(dir || '?').slice(0, 3).toUpperCase();
+  }
 
   const log = (msg, color, data) => {
     if (data === undefined) console.log(`%c[pbn-mapper] ${msg}`, `color:${color}`);
@@ -1627,9 +1643,50 @@
 
     const roomLabel = document.createElement('div');
     Object.assign(roomLabel.style, {
-      flex: '1', minWidth: '0',
+      // Grows into spare space, but shrinks far more eagerly than the exits do, so the
+      // name is what gives way on a narrow panel. min-width 0 lets it yield completely.
+      flex: '1 999 auto', minWidth: '0',
       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
     });
+
+    // Where you can go from here: green for open, red for locked or broken. Given a
+    // narrow panel the name yields before these do — the exits are the actionable part.
+    const exitBar = document.createElement('div');
+    Object.assign(exitBar.style, {
+      // Shrinks only once the name has nothing left to give, and clips rather than
+      // shoving the resize grip out of the footer at the narrowest panel widths.
+      flex: '0 1 auto', minWidth: '0', whiteSpace: 'nowrap', overflow: 'hidden',
+      fontWeight: 'bold', letterSpacing: '0.3px'
+    });
+
+    function renderExits(room) {
+      exitBar.textContent = '';
+      const exits = (room && room.visited && room.exits) ? room.exits : [];
+      if (!exits.length) {
+        const dash = document.createElement('span');
+        dash.textContent = room && room.visited ? 'no exits' : '';
+        dash.style.color = '#777';
+        dash.style.fontWeight = 'normal';
+        exitBar.appendChild(dash);
+        return;
+      }
+      const rank = (d) => { const i = DIR_ORDER.indexOf(d); return i < 0 ? 99 : i; };
+      exits.slice()
+        .sort((a, b) => rank(a.direction) - rank(b.direction) ||
+          String(a.direction).localeCompare(String(b.direction)))
+        .forEach((e) => {
+          const blocked = !!(e.locked || e.broken);
+          const span = document.createElement('span');
+          span.textContent = exitAbbr(e.direction);
+          span.style.color = blocked ? '#e8584a' : '#5fcf6a';
+          span.style.marginLeft = '6px';
+          const target = e.targetRoomId != null ? rooms[idToKey[e.targetRoomId]] : null;
+          span.title = cap(e.direction)
+            + (e.broken ? ' — broken' : e.locked ? ' — locked' : '')
+            + (isPlaced(target) ? ` → ${target.name || target.key}` : '');
+          exitBar.appendChild(span);
+        });
+    }
 
     // The browser's own resize grip sits at the panel's bottom-right whatever is there,
     // so it used to float over the map. Driving the resize by hand keeps the affordance
@@ -1658,7 +1715,7 @@
     });
     window.addEventListener('mouseup', () => { resizing = false; });
 
-    footer.append(roomLabel, grip);
+    footer.append(roomLabel, exitBar, grip);
     ui.footer = footer;
 
     root.append(header, body, footer, menu, autoPanel);
@@ -1680,6 +1737,7 @@
       renderSvg(g, labels);
       const cur = currentKey ? rooms[currentKey] : null;
       roomLabel.textContent = cur ? (cur.name || cur.key) : '';
+      renderExits(cur);
     });
 
     render();

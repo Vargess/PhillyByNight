@@ -8,6 +8,27 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 3.5.0 — 2026-10-16
+
+### Added
+- The footer now lists the current room's **exits**, green for open and red for locked
+  or broken, abbreviated (`N NE E SE S SW W NW U D`, sewer passages as `P1 P2 P3`) and
+  sorted into compass order rather than whatever order the server sent them. Hovering
+  one gives the full direction, whether it is locked or broken, and the destination
+  room where that is known.
+
+### Notes
+- Locked status was already in the data — the game sends `isLocked` per exit and the
+  map has been drawing those as red dashed lines all along. This surfaces the same
+  information as text.
+- Locked and broken are both shown red, matching how the map already draws them. The
+  tooltip distinguishes the two.
+- Footer layout: the room name shrinks far more eagerly than the exits and can yield
+  completely, so all ten exits stay legible down to the 220px minimum panel width and
+  the resize grip is never pushed out of the footer.
+
+---
+
 ## 3.4.0 — 2026-10-16
 
 ### Changed

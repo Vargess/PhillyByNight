@@ -91,8 +91,13 @@ the setting above is the control that actually matters.
 ## Using it
 
 The panel starts bottom-right. Drag the header to move it, drag the `◢` grip in the
-footer bar to resize, and use the toolbar. The footer shows the room you're currently
-standing in.
+footer bar to resize, and use the toolbar.
+
+The footer shows the room you're standing in and its exits — **green** for open,
+**red** for locked or broken — abbreviated `N NE E SE S SW W NW U D`, with sewer
+passages as `P1 P2 P3`. Hover an exit for its full direction, whether it's locked or
+broken, and where it leads if that room is known. On a narrow panel the room name
+gives way first so the exits stay readable.
 
 | Button | What it does |
 | --- | --- |
