@@ -63,9 +63,28 @@ line endings, which changes the hash. CHECKSUMS.md explains how to check a clone
 
 ### Updating
 
-The script carries no auto-update URL, so Tampermonkey won't update it for you.
-To upgrade, open the install link again and let it overwrite the existing script.
-**Your map data survives** — it's stored separately from the script itself.
+The script can check for a new version, but only when you ask it to:
+**`⋯` → Check for updates**. It compares your version against the published one and,
+if there's a newer release, offers to open Tampermonkey's install page — which shows
+you what changed and waits for you to confirm. The script only ever *reads* the
+published file; it can't replace itself.
+
+**Your map data survives** updating — it's stored separately from the script.
+
+#### Turning off Tampermonkey's own update checks
+
+Tampermonkey may also check on its own schedule, independently of the button above.
+If you'd rather it only happened when you choose:
+
+- **Dashboard → Settings → Check for updates → Never.** You may need to switch
+  *Config mode* to *Advanced* to see it.
+- Or per script: open the script, go to its **Settings** tab and set updates to
+  **Never**. (Labels move around between Tampermonkey versions.)
+
+Worth knowing: the `@updateURL` and `@downloadURL` lines in the script don't decide
+this either way. They only say *where* to look. Removing them wouldn't stop automatic
+checks — Tampermonkey falls back to whatever URL the script was installed from — so
+the setting above is the control that actually matters.
 
 ---
 
@@ -103,6 +122,7 @@ coordinates, unexplored exits and where its stairs lead.
 | ☑ Record activity log | Whether to record activity at all |
 | ☑ Include chat text in the log | Off by default — see [Privacy](#privacy) |
 | Clear activity log | Discard the recorded log |
+| Check for updates | Ask GitHub whether a newer version exists |
 
 ---
 

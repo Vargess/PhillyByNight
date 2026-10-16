@@ -2,8 +2,10 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.2.0
+// @version      3.3.0
 // @match        https://philadelphiabynight.net/play*
+// @downloadURL  https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
+// @updateURL    https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
@@ -17,7 +19,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
-  const SCRIPT_VERSION = '3.2.0';
+  const SCRIPT_VERSION = '3.3.0';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now
@@ -57,6 +59,76 @@
     else console.log(`%c[pbn-mapper] ${msg}`, `color:${color}`, data);
     logEvent('mapper', msg, data);
   };
+
+  // ----------------------------------------------------------------- updates
+  //
+  // Checking is deliberately something you ask for, never something that happens on
+  // its own. This only ever *reads* the published file and compares version strings;
+  // installing stays with Tampermonkey's own confirmation page, which shows the diff
+  // and waits for you. Nothing here can replace the running script.
+  //
+  // raw.githubusercontent.com sends Access-Control-Allow-Origin: *, so a plain fetch
+  // works and no GM_* grant is needed — which matters, because any @grant would move
+  // the script out of page context and break the WebSocket hook entirely.
+  const UPDATE_URL =
+    'https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js';
+
+  function parsePublishedVersion(text) {
+    const m = /^\/\/\s*@version\s+(.+)$/m.exec(text || '');
+    return m ? m[1].trim() : null;
+  }
+
+  function compareVersions(a, b) {
+    const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+    const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const x = pa[i] || 0, y = pb[i] || 0;
+      if (x !== y) return x < y ? -1 : 1;
+    }
+    return 0;
+  }
+
+  async function checkForUpdate() {
+    let text;
+    try {
+      // The raw host caches for five minutes; bypass it so a fresh push is seen.
+      const res = await fetch(`${UPDATE_URL}?t=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      text = await res.text();
+    } catch (e) {
+      logEvent('update', 'check failed', { error: e && e.message });
+      alert('Could not reach GitHub to check for updates.\n\n' + (e && e.message)
+        + '\n\nYou can always look at:\n' + UPDATE_URL);
+      return;
+    }
+
+    const latest = parsePublishedVersion(text);
+    if (!latest) {
+      logEvent('update', 'no version in published file');
+      alert('Fetched the published script but could not read a version from it.');
+      return;
+    }
+
+    const cmp = compareVersions(SCRIPT_VERSION, latest);
+    logEvent('update', 'checked', { running: SCRIPT_VERSION, published: latest });
+
+    if (cmp > 0) {
+      alert(`You are running ${SCRIPT_VERSION}, which is newer than the published `
+        + `${latest}. Nothing to do.`);
+      return;
+    }
+    if (cmp === 0) {
+      alert(`PbN Mapper ${SCRIPT_VERSION} is up to date.`);
+      return;
+    }
+    if (confirm(`PbN Mapper ${latest} is available — you have ${SCRIPT_VERSION}.\n\n`
+      + 'Open the install page? Tampermonkey shows you what changed and asks you to '
+      + 'confirm; nothing is installed until you do.\n\nYour map and autosaves are '
+      + 'stored separately and are not affected by updating.')) {
+      logEvent('update', 'opened install page', { from: SCRIPT_VERSION, to: latest });
+      window.open(UPDATE_URL, '_blank', 'noopener');
+    }
+  }
 
   // ---------------------------------------------------------------- explore
   //
@@ -1378,11 +1450,17 @@
       saveView();
       syncToggleLabels();
     });
+    const sep2 = document.createElement('div');
+    Object.assign(sep2.style, { borderTop: '1px solid #3a3a42', margin: '4px 2px' });
+
     menuItem('Clear activity log', async () => {
       if (!confirm('Discard the recorded activity log?')) return;
       logBuffer.length = 0;
       try { await logClear(); } catch (e) { /* nothing to clear */ }
     });
+
+    menu.appendChild(sep2);
+    menuItem(`Check for updates  (v${SCRIPT_VERSION})`, () => checkForUpdate());
 
     function syncToggleLabels() {
       const mark = (on) => (on ? '✓ ' : ' ');

@@ -8,6 +8,28 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 3.3.0 — 2026-10-16
+
+### Added
+- **Check for updates** in the `⋯` menu, showing the running version in its label. It
+  fetches the published script, compares versions, and if a newer one exists offers to
+  open Tampermonkey's install page — which shows the changes and waits for
+  confirmation. The script only reads the published file; it cannot replace itself.
+- `@downloadURL` and `@updateURL`, so Tampermonkey knows where the canonical copy
+  lives and its dashboard can offer a manual update.
+
+### Notes
+- Updating stays something you ask for. The metadata URLs only say *where* to look,
+  not *when* — whether Tampermonkey also checks on a schedule is its own setting, and
+  removing the URLs would not disable that, since it falls back to the URL the script
+  was installed from. The README documents how to turn its automatic checking off.
+- The check uses a plain `fetch`, which works because raw.githubusercontent.com sends
+  `Access-Control-Allow-Origin: *`. That matters: any `@grant` would move the script
+  out of page context and break the WebSocket hook the whole mapper depends on.
+  Network and parse failures report clearly and fall back to showing the URL.
+
+---
+
 ## 3.2.0 — 2026-10-16
 
 ### Added
