@@ -64,10 +64,15 @@ line endings, which changes the hash. CHECKSUMS.md explains how to check a clone
 ### Updating
 
 The script can check for a new version, but only when you ask it to:
-**`⋯` → Check for updates**. It compares your version against the published one and,
-if there's a newer release, offers to open Tampermonkey's install page — which shows
-you what changed and waits for you to confirm. The script only ever *reads* the
-published file; it can't replace itself.
+**`⋯` → Check for updates**. It offers to open Tampermonkey's install page, which
+shows you the published version and what changed, and waits for you to confirm. The
+script only ever *reads*; it can't replace itself.
+
+The game page's security policy (`connect-src`) doesn't allow the script to contact
+GitHub directly, so it usually can't compare version numbers before opening that page
+— Tampermonkey tells you instead, once the page is open. If the policy ever changes,
+the check will compare versions first and only offer the page when there's genuinely
+something newer.
 
 **Your map data survives** updating — it's stored separately from the script.
 
@@ -94,10 +99,10 @@ The panel starts bottom-right. Drag the header to move it, drag the `◢` grip i
 footer bar to resize, and use the toolbar.
 
 The footer shows the room you're standing in and its exits — **green** for open,
-**red** for locked or broken — abbreviated `N NE E SE S SW W NW U D`, with sewer
-passages as `P1 P2 P3`. Hover an exit for its full direction, whether it's locked or
-broken, and where it leads if that room is known. On a narrow panel the room name
-gives way first so the exits stay readable.
+**red** for locked, **yellow** for broken — abbreviated `N NE E SE S SW W NW U D`,
+with sewer passages as `P1 P2 P3`. Hover an exit for its full direction, its state,
+and where it leads if that room is known. On a narrow panel the room name gives way
+first so the exits stay readable.
 
 | Button | What it does |
 | --- | --- |

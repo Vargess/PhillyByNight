@@ -8,6 +8,26 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 3.5.1 — 2026-10-16
+
+### Fixed
+- **Check for updates failed on the game page.** Its Content-Security-Policy allows
+  `connect-src 'self' wss: ws:` plus the game's own CDN and Google — GitHub is not on
+  that list, so the fetch was refused. Firefox reports this as a bare `NetworkError`,
+  indistinguishable from being offline, and the old message said "could not reach
+  GitHub", which pointed at the wrong thing entirely.
+
+  The check now listens for the CSP violation and names the real cause, then offers
+  to open Tampermonkey's install page — which is not subject to the page's policy and
+  shows the published version anyway. Declining opens nothing. If the policy ever
+  changes, the version comparison starts working again on its own.
+
+### Changed
+- Broken exits are **yellow** in the footer, distinct from locked red. Broken takes
+  precedence over locked where an exit is somehow both.
+
+---
+
 ## 3.5.0 — 2026-10-16
 
 ### Added

@@ -2,7 +2,7 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.5.0
+// @version      3.5.1
 // @match        https://philadelphiabynight.net/play*
 // @downloadURL  https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
 // @updateURL    https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
@@ -19,7 +19,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
-  const SCRIPT_VERSION = '3.5.0';
+  const SCRIPT_VERSION = '3.5.1';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now
@@ -104,18 +104,46 @@
     return 0;
   }
 
+  function openInstallPage(why) {
+    logEvent('update', 'opened install page', { why });
+    window.open(UPDATE_URL, '_blank', 'noopener');
+  }
+
   async function checkForUpdate() {
     let text;
+    // The game's Content-Security-Policy lists connect-src 'self' wss: ws: plus its own
+    // CDN and Google — GitHub is not on it, so this fetch is refused outright. Firefox
+    // surfaces that as a bare "NetworkError", indistinguishable from being offline, so
+    // watch for the violation event and say which it actually was.
+    let blockedByCSP = false;
+    const onViolation = (ev) => {
+      if (ev.effectiveDirective === 'connect-src' || ev.violatedDirective === 'connect-src') {
+        blockedByCSP = true;
+      }
+    };
+    document.addEventListener('securitypolicyviolation', onViolation);
     try {
       // The raw host caches for five minutes; bypass it so a fresh push is seen.
       const res = await fetch(`${UPDATE_URL}?t=${Date.now()}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       text = await res.text();
     } catch (e) {
-      logEvent('update', 'check failed', { error: e && e.message });
-      alert('Could not reach GitHub to check for updates.\n\n' + (e && e.message)
-        + '\n\nYou can always look at:\n' + UPDATE_URL);
+      // The violation event is dispatched a tick after the fetch rejects, so give it
+      // one before deciding which failure this was.
+      await new Promise((r) => setTimeout(r, 60));
+      logEvent('update', 'check failed', { error: e && e.message, blockedByCSP });
+      const reason = blockedByCSP
+        ? 'The game page\'s security policy does not allow the script to contact GitHub '
+          + 'directly, so the version cannot be compared from here.'
+        : 'GitHub could not be reached: ' + (e && e.message);
+      if (confirm(`${reason}\n\nOpen the install page instead? Tampermonkey will show `
+        + `you the published version and offer to update if it is newer than your `
+        + `${SCRIPT_VERSION}.\n\nYour map and autosaves are not affected.`)) {
+        openInstallPage(blockedByCSP ? 'csp-blocked' : 'network-failed');
+      }
       return;
+    } finally {
+      document.removeEventListener('securitypolicyviolation', onViolation);
     }
 
     const latest = parsePublishedVersion(text);
@@ -141,8 +169,7 @@
       + 'Open the install page? Tampermonkey shows you what changed and asks you to '
       + 'confirm; nothing is installed until you do.\n\nYour map and autosaves are '
       + 'stored separately and are not affected by updating.')) {
-      logEvent('update', 'opened install page', { from: SCRIPT_VERSION, to: latest });
-      window.open(UPDATE_URL, '_blank', 'noopener');
+      openInstallPage(`${SCRIPT_VERSION} -> ${latest}`);
     }
   }
 
@@ -1675,10 +1702,10 @@
         .sort((a, b) => rank(a.direction) - rank(b.direction) ||
           String(a.direction).localeCompare(String(b.direction)))
         .forEach((e) => {
-          const blocked = !!(e.locked || e.broken);
           const span = document.createElement('span');
           span.textContent = exitAbbr(e.direction);
-          span.style.color = blocked ? '#e8584a' : '#5fcf6a';
+          // Broken outranks locked: a locked door is a door, a broken one is a fault.
+          span.style.color = e.broken ? '#e8c547' : e.locked ? '#e8584a' : '#5fcf6a';
           span.style.marginLeft = '6px';
           const target = e.targetRoomId != null ? rooms[idToKey[e.targetRoomId]] : null;
           span.title = cap(e.direction)
