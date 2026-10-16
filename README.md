@@ -90,8 +90,9 @@ the setting above is the control that actually matters.
 
 ## Using it
 
-The panel starts bottom-right. Drag the header to move it, drag the bottom-right
-corner to resize, and use the toolbar:
+The panel starts bottom-right. Drag the header to move it, drag the `◢` grip in the
+footer bar to resize, and use the toolbar. The footer shows the room you're currently
+standing in.
 
 | Button | What it does |
 | --- | --- |

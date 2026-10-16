@@ -8,6 +8,19 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 3.4.0 — 2026-10-16
+
+### Changed
+- The current room's name now sits in a **grey footer bar** instead of being floated
+  over the map. It previously overlapped whatever happened to be drawn beneath it,
+  which no amount of text shadow really fixes. Long names truncate with an ellipsis.
+- **Resizing moved into the footer.** The browser's own resize grip renders at the
+  panel's bottom-right corner regardless of what is there, so it used to sit on top of
+  the map. Native resizing is off and a `◢` grip in the footer drives it by hand,
+  keeping the minimum size and leaving the panel's position alone while dragging.
+
+---
+
 ## 3.3.0 — 2026-10-16
 
 ### Added

@@ -2,7 +2,7 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.3.0
+// @version      3.4.0
 // @match        https://philadelphiabynight.net/play*
 // @downloadURL  https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
 // @updateURL    https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
@@ -19,7 +19,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
-  const SCRIPT_VERSION = '3.3.0';
+  const SCRIPT_VERSION = '3.4.0';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now
@@ -1170,7 +1170,7 @@
   logEnabled = state.logEnabled !== false;
   logChatText = !!state.logChatText;
 
-  const ui = { g: null, svg: null, select: null, label: null, setCollapsed: null };
+  const ui = { g: null, svg: null, select: null, label: null, footer: null, setCollapsed: null };
 
   // ------------------------------------------------- game-window auto-minimise
   //
@@ -1258,7 +1258,7 @@
       left: `${Math.max(margin, window.innerWidth - initW - margin)}px`,
       top: `${Math.max(margin, window.innerHeight - initH - margin)}px`,
       width: `${initW}px`, height: `${initH}px`,
-      minWidth: '220px', minHeight: '160px', resize: 'both',
+      minWidth: '220px', minHeight: '160px', resize: 'none',
       background: 'rgba(20,20,24,0.92)', border: '1px solid #555', borderRadius: '8px',
       zIndex: 999999, color: '#eee', font: '12px sans-serif', display: 'flex', flexDirection: 'column',
       boxShadow: '0 4px 16px rgba(0,0,0,0.5)', overflow: 'hidden'
@@ -1352,7 +1352,6 @@
       root.style.top = `${margin}px`;
       root.style.right = 'auto';
       root.style.bottom = 'auto';
-      root.style.resize = 'both';
       state.scale = 1;
       state.autoCenter = true;
       state.autoFloor = true;
@@ -1582,13 +1581,13 @@
         expandedHeight = root.style.height;
         expandedWidth = root.style.width;
         body.style.display = 'none';
+        if (ui.footer) ui.footer.style.display = 'none';
         root.style.height = 'auto';
-        root.style.resize = 'none';
       } else {
         body.style.display = 'block';
+        if (ui.footer) ui.footer.style.display = 'flex';
         root.style.height = expandedHeight;
         root.style.width = expandedWidth;
-        root.style.resize = 'both';
       }
     }
     collapseBtn.addEventListener('click', () => {
@@ -1616,14 +1615,53 @@
     svg.appendChild(g);
     body.appendChild(svg);
 
+    // A solid bar rather than text floated over the map: the room name used to sit on
+    // whatever happened to be drawn beneath it, which no amount of text-shadow fixes.
+    const footer = document.createElement('div');
+    Object.assign(footer.style, {
+      display: 'flex', alignItems: 'center', gap: '6px',
+      flex: '0 0 auto', minHeight: '20px', padding: '3px 4px 3px 8px',
+      background: '#2a2a30', borderTop: '1px solid #43434c',
+      font: '11px sans-serif', color: '#ccc', userSelect: 'none'
+    });
+
     const roomLabel = document.createElement('div');
     Object.assign(roomLabel.style, {
-      position: 'absolute', bottom: '4px', left: '6px', right: '6px',
-      fontSize: '11px', color: '#ccc', pointerEvents: 'none', textShadow: '0 0 4px #000'
+      flex: '1', minWidth: '0',
+      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
     });
-    body.appendChild(roomLabel);
 
-    root.append(header, body, menu, autoPanel);
+    // The browser's own resize grip sits at the panel's bottom-right whatever is there,
+    // so it used to float over the map. Driving the resize by hand keeps the affordance
+    // inside the footer where it belongs.
+    const grip = document.createElement('div');
+    grip.textContent = '◢';
+    grip.title = 'Drag to resize';
+    Object.assign(grip.style, {
+      cursor: 'nwse-resize', color: '#8a8a95', fontSize: '10px',
+      lineHeight: '10px', padding: '2px 2px 0 4px', flex: '0 0 auto'
+    });
+
+    let resizing = false, rsx = 0, rsy = 0, rw = 0, rh = 0;
+    grip.addEventListener('mousedown', (e) => {
+      resizing = true;
+      rsx = e.clientX; rsy = e.clientY;
+      const r = root.getBoundingClientRect();
+      rw = r.width; rh = r.height;
+      e.preventDefault();
+      e.stopPropagation();   // the header drag handler must not also fire
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!resizing) return;
+      root.style.width = `${Math.max(220, rw + (e.clientX - rsx))}px`;
+      root.style.height = `${Math.max(160, rh + (e.clientY - rsy))}px`;
+    });
+    window.addEventListener('mouseup', () => { resizing = false; });
+
+    footer.append(roomLabel, grip);
+    ui.footer = footer;
+
+    root.append(header, body, footer, menu, autoPanel);
     document.body.appendChild(root);
 
     ui.g = g; ui.svg = svg; ui.select = floorSelect; ui.label = roomLabel;
