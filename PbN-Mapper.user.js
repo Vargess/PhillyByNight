@@ -2,7 +2,7 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.1.0
+// @version      3.2.0
 // @match        https://philadelphiabynight.net/play*
 // @run-at       document-start
 // @grant        none
@@ -17,7 +17,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
-  const SCRIPT_VERSION = '3.1.0';
+  const SCRIPT_VERSION = '3.2.0';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now
@@ -57,6 +57,78 @@
     else console.log(`%c[pbn-mapper] ${msg}`, `color:${color}`, data);
     logEvent('mapper', msg, data);
   };
+
+  // ---------------------------------------------------------------- explore
+  //
+  // "search <direction>" for all ten compass/vertical directions, then "inspect" —
+  // the sweep that turns up exits the room description does not mention.
+  //
+  // The game's command box is a Quasar textarea whose value Vue owns, so assigning to
+  // it directly is ignored: the native setter has to be called and an input event
+  // dispatched by hand before the framework notices the text. Enter is then sent as a
+  // real key pair a moment later, which is what the game listens for.
+  const EXPLORE_INPUT = 'textarea.q-field__native';
+  const EXPLORE_DIRS = ['north', 'south', 'east', 'west', 'up', 'down',
+    'northeast', 'northwest', 'southeast', 'southwest'];
+  const EXPLORE_COMMANDS = EXPLORE_DIRS.map((d) => 'search ' + d).concat('inspect');
+  const EXPLORE_STEP_MS = 1500;    // keep the original pacing; the game needs the gap
+  const EXPLORE_SUBMIT_MS = 30;
+
+  let exploreTimer = null;
+  let exploreStep = 0;
+  const exploreListeners = [];
+  const onExploreChange = () => exploreListeners.forEach((fn) => fn());
+  const exploreRunning = () => exploreTimer !== null;
+
+  function sendGameCommand(text) {
+    const box = document.querySelector(EXPLORE_INPUT);
+    if (!box) return false;
+    box.focus();
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+    setValue.call(box, text);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    setTimeout(() => {
+      const opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true };
+      box.dispatchEvent(new KeyboardEvent('keydown', opts));
+      box.dispatchEvent(new KeyboardEvent('keyup', opts));
+    }, EXPLORE_SUBMIT_MS);
+    return true;
+  }
+
+  function stopExplore(reason) {
+    if (exploreTimer === null) return;
+    clearTimeout(exploreTimer);
+    exploreTimer = null;
+    logEvent('explore', 'stopped', { reason, sent: exploreStep, of: EXPLORE_COMMANDS.length });
+    exploreStep = 0;
+    onExploreChange();
+  }
+
+  function startExplore(reason) {
+    stopExplore('superseded');
+    if (!document.querySelector(EXPLORE_INPUT)) {
+      log(`explore: no command box matching ${EXPLORE_INPUT}`, '#e74c3c');
+      logEvent('explore', 'aborted — command box not found', { selector: EXPLORE_INPUT });
+      return false;
+    }
+    exploreStep = 0;
+    logEvent('explore', 'started', { reason, commands: EXPLORE_COMMANDS.length });
+    const step = () => {
+      if (exploreStep >= EXPLORE_COMMANDS.length) {
+        exploreTimer = null;
+        exploreStep = 0;
+        logEvent('explore', 'finished', { reason });
+        onExploreChange();
+        return;
+      }
+      const cmd = EXPLORE_COMMANDS[exploreStep++];
+      if (!sendGameCommand(cmd)) { stopExplore('command box disappeared'); return; }
+      exploreTimer = setTimeout(step, EXPLORE_STEP_MS);
+      onExploreChange();
+    };
+    step();
+    return true;
+  }
 
   // ------------------------------------------------------------- data model
   //
@@ -99,7 +171,7 @@
   }
   const saveTransit = () => localStorage.setItem(TRANSIT_KEY, JSON.stringify(transitEdges));
   const saveView = () => localStorage.setItem(VIEW_KEY, JSON.stringify({
-    floor: state.floor, autoMinimize: state.autoMinimize,
+    floor: state.floor, autoMinimize: state.autoMinimize, autoExplore: state.autoExplore,
     logEnabled: logEnabled, logChatText: logChatText
   }));
 
@@ -784,6 +856,8 @@
 
     const placed = resolvePlacement(data, id, prev, direction);
     const existing = rooms[placed.key] || (id != null && idToKey[id] ? rooms[idToKey[id]] : null);
+    const firstVisit = !(existing && existing.visited);
+    const movedRoom = currentKey !== placed.key;
 
     // Re-keying (an id-addressed room that turned out to have a real cell) must not
     // leave the old entry behind as a duplicate.
@@ -810,6 +884,16 @@
 
     currentKey = rec.key;
     if (!rec.isVehicle) ride = null;   // stepped off the train
+
+    // A sweep belongs to the room it was started in. Walking out mid-way would send the
+    // rest of the searches wherever we have just arrived, so abandon it on any move.
+    if (movedRoom) stopExplore('left the room');
+    // Only somewhere genuinely new is worth the sixteen seconds; a room already searched
+    // would otherwise be swept again every time it is walked through.
+    if (movedRoom && firstVisit && state.autoExplore && !rec.isVehicle) {
+      startExplore('auto — first visit to ' + rec.key);
+    }
+
     saveRooms();
     render();
   }
@@ -1004,7 +1088,7 @@
   const state = Object.assign(
     {
       floor: null, scale: 1, panX: 0, panY: 0, collapsed: false,
-      autoCenter: true, autoFloor: true, autoMinimize: true
+      autoCenter: true, autoFloor: true, autoMinimize: true, autoExplore: false
     },
     readJSON(VIEW_KEY, {})
   );
@@ -1022,7 +1106,9 @@
   // advance, so match a tunable selector list first and otherwise fall back to a shape
   // test: a large, high-z-index, fixed or absolutely positioned element that is not
   // ours. Add a selector here if a particular window is missed.
-  const POPUP_SELECTORS = ['[role="dialog"]', '[aria-modal="true"]'];
+  // The game is a Quasar app, so its windows are .q-dialog; the ARIA pair is kept as a
+  // backstop for anything rendered outside the framework.
+  const POPUP_SELECTORS = ['.q-dialog', '[role="dialog"]', '[aria-modal="true"]'];
   const POPUP_MIN_Z = 100;
   const POPUP_MIN_AREA = 0.18;   // fraction of the viewport it must cover
 
@@ -1154,6 +1240,32 @@
     fitBtn.addEventListener('click', () => { fitFloor(); render(); });
 
     // Put the panel back where it starts: top-right corner, default size, default zoom.
+    const exploreBtn = btn('Explore', 'Search every exit direction, then inspect');
+    exploreBtn.style.minWidth = '56px';
+    exploreBtn.addEventListener('click', () => {
+      if (exploreRunning()) { stopExplore('cancelled from the toolbar'); return; }
+      if (!startExplore('toolbar button')) {
+        alert('Could not find the game\'s command box, so nothing was sent.\n'
+          + `Expected a textarea matching ${EXPLORE_INPUT}.`);
+      }
+    });
+
+    // Held down while auto-explore is armed, and showing progress while a sweep runs.
+    function syncExploreBtn() {
+      const armed = state.autoExplore;
+      const running = exploreRunning();
+      exploreBtn.textContent = running ? `Stop ${exploreStep}/${EXPLORE_COMMANDS.length}` : 'Explore';
+      exploreBtn.style.background = running ? '#7a5a1a' : (armed ? '#2f5f3a' : '#3a3a42');
+      exploreBtn.style.borderColor = running ? '#e8a530' : (armed ? '#6fcf8a' : '#555');
+      exploreBtn.style.boxShadow = armed && !running ? 'inset 0 2px 4px rgba(0,0,0,0.7)' : 'none';
+      exploreBtn.title = running
+        ? `Sweeping this room — ${exploreStep} of ${EXPLORE_COMMANDS.length} sent. Click to stop.`
+        : (armed
+          ? 'Auto-explore is on: every new room is swept. Click to sweep this one now.'
+          : 'Search every exit direction, then inspect');
+    }
+    exploreListeners.push(syncExploreBtn);
+
     const dockBtn = btn('↗', 'Dock to the top-right corner at the default size');
     dockBtn.addEventListener('click', () => dockTopRight());
 
@@ -1240,6 +1352,15 @@
       else if (state.autoMinimize) scheduleWindowCheck();
     });
 
+    const autoExploreItem = menuItem('', () => {
+      state.autoExplore = !state.autoExplore;
+      saveView();
+      syncToggleLabels();
+      syncExploreBtn();
+      logEvent('ui', 'auto-explore ' + (state.autoExplore ? 'enabled' : 'disabled'));
+      if (!state.autoExplore) stopExplore('auto-explore turned off');
+    });
+
     const sep = document.createElement('div');
     Object.assign(sep.style, { borderTop: '1px solid #3a3a42', margin: '4px 2px' });
     menu.appendChild(sep);
@@ -1265,6 +1386,7 @@
     function syncToggleLabels() {
       const mark = (on) => (on ? '✓ ' : ' ');
       autoMinItem.textContent = mark(state.autoMinimize) + 'Minimise while a game window is open';
+      autoExploreItem.textContent = mark(state.autoExplore) + 'Explore each new room automatically';
       logItem.textContent = mark(logEnabled) + 'Record activity log';
       chatItem.textContent = mark(logChatText) + 'Include chat text in the log';
     }
@@ -1396,7 +1518,11 @@
     });
     ui.setCollapsed = setCollapsed;
 
-    header.append(title, floorSelect, recenterBtn, fitBtn, dockBtn, menuBtn, importInput, collapseBtn);
+    // The title yields first when the panel is narrow, so the controls never clip.
+    title.style.minWidth = '0';
+    title.style.overflow = 'hidden';
+    header.append(title, floorSelect, exploreBtn, recenterBtn, fitBtn, dockBtn, menuBtn, importInput, collapseBtn);
+    syncExploreBtn();
 
     const body = document.createElement('div');
     body.style.flex = '1';
