@@ -8,6 +8,20 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 2026-10-17 — map-viewer.html (5)
+
+### Changed
+- **Statistics is back in the left sidebar**, sitting on its floor, and **the filters
+  expand to take the remaining height** — 72% of the column on a 900px-tall window.
+  The sidebar no longer scrolls as a single piece; the filter list scrolls inside its
+  own section, which is what lets that section absorb the slack and keeps statistics
+  pinned to the bottom. On a short window the filters give way first and scroll, and
+  statistics stays put.
+- With statistics gone from the right-hand panel, the room list there grows from 54%
+  to 70%.
+
+---
+
 ## 2026-10-17 — map-viewer.html (4)
 
 ### Changed
