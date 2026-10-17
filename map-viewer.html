@@ -699,6 +699,10 @@ function ingest(data, name) {
   state.byKey.clear();
   state.targetIdToCoord.clear();
   state.unplaced = [];
+  // A selection from the previous file would otherwise survive into this one and
+  // point at a room it may not contain; openAtHome sets them again where it can.
+  state.selectedKey = null;
+  state.currentRoomKey = null;
 
   for (const [key, r] of Object.entries(rooms)) {
     if (!r || typeof r !== 'object') continue;
@@ -718,10 +722,35 @@ function ingest(data, name) {
   renderSidebar();
   renderTransit();
   buildLegend();
-  selectFloor(state.availableFloors[0]);
-  fitAll();
+  openAtHome();
   updateFileInfo();
   render();
+}
+
+// Where a freshly loaded map should land. availableFloors is sorted high-to-low, so
+// the old selectFloor(availableFloors[0]) opened on the topmost floor — typically a
+// rooftop or two — and fitAll() then zoomed to that handful of rooms.
+const HOME_KEY = '16,59,0';
+
+function openAtHome() {
+  const home = state.byKey.get(HOME_KEY);
+  if (home && home.placed) {
+    selectFloor(home.z);
+    state.view.scale = 1;
+    selectRoom(home.key);      // also makes it the keyboard cursor, as clicking would
+    autoCenterOn(home);
+    return;
+  }
+  // No home room in this file: fall back to street level, else the busiest floor,
+  // and frame the whole thing rather than landing somewhere arbitrary.
+  const counts = new Map();
+  for (const r of state.rooms) {
+    if (r.placed) counts.set(r.z, (counts.get(r.z) || 0) + 1);
+  }
+  const busiest = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  const floor = counts.has(0) ? 0 : (busiest ? busiest[0] : state.availableFloors[0]);
+  selectFloor(floor);
+  fitAll();
 }
 
 function normalizeRoom(key, r) {

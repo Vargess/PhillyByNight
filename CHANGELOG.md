@@ -8,6 +8,24 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 2026-10-17 — map-viewer.html (2)
+
+### Changed
+- A freshly loaded map now opens **centred on `16,59,0` at street level**, at 1× zoom,
+  with that room selected and set as the keyboard cursor — the same state as clicking
+  it. `availableFloors` is sorted high-to-low, so the previous
+  `selectFloor(availableFloors[0])` opened on the topmost floor, typically a rooftop
+  or two, and then zoomed to fit just those.
+- If a file has no such room it falls back to street level, or the busiest floor when
+  there is no street level, and frames the whole floor rather than landing somewhere
+  arbitrary.
+
+### Fixed
+- Loading a second file kept the previous one's selected and current room, which could
+  point at a room the new file does not contain. Both are cleared on load.
+
+---
+
 ## 2026-10-17 — map-viewer.html
 
 The viewer had grown its own visual language, so the same room looked like two
