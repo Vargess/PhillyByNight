@@ -6,7 +6,7 @@ confirm the copy you downloaded is the copy that was published here.
 | File | SHA-256 | Size | Last changed in |
 | --- | --- | --- | --- |
 | `PbN-Mapper.user.js` | `be13794c97b3a24ff7ea9b154709da62389f6b98611d8ecdd0fbb73d2f228833` | 92,266 bytes | [`571ceec`](https://github.com/Vargess/PhillyByNight/commit/571ceec) |
-| `map-viewer.html` | `7b819b61a8e0fc5911783ee9d6f8c4a056886a32afd65d71cda6e1bf4e11bad5` | 86,312 bytes | [`500cca5`](https://github.com/Vargess/PhillyByNight/commit/500cca5) |
+| `map-viewer.html` | `bc54fd4be28d4726fb4fbfae2288c4e671e9cef658a8bb83637fb5a660ad8e22` | 92,085 bytes | [`3ddf7d8`](https://github.com/Vargess/PhillyByNight/commit/3ddf7d8) |
 
 Only these two are listed. They're the files that run code — one in your browser on
 the game site, one locally against your map data. The documentation and licence
