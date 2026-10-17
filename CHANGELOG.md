@@ -8,6 +8,34 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 2026-10-17 — map-viewer.html (4)
+
+### Changed
+- **Statistics moved to the right-hand panel and sits on its floor**, below the room
+  list, at any panel height. The statistics grid now packs two label/value pairs per
+  row: at one pair per row it took a third of the column and pushed the room list
+  under the half it is meant to have. The split is now details 30% / list 54% /
+  statistics 16%.
+- **The map's "Key features" box describes the targeted room** rather than listing the
+  whole palette — its state, its haven ring, a count of its open, locked and broken
+  exits, its stairs, any exits leading somewhere unknown, and how its position was
+  derived. It follows the target, including keyboard movement, and falls back to the
+  full palette when nothing is targeted. Reading an eight-row key to decode one room
+  was work the box can do for you.
+
+### Fixed
+- The details panel's collapse button stopped collapsing anything once the panel held
+  a room list and a stats grid. Two causes: a flex item will not shrink below its
+  content's min-content width while `min-width` is `auto`, and `width` alone does not
+  size a flex item — `flex-basis` does.
+- The panel no longer animates its width. A width transition that stalls leaves the
+  panel stuck open with the collapsed class applied and no way to tell, which is a
+  worse failure than losing a 150ms slide.
+- The room list no longer claims the whole column. Its flex basis came from its own
+  content — hundreds of rows — which squeezed the details above it to a 40px sliver.
+
+---
+
 ## 2026-10-17 — map-viewer.html (3)
 
 ### Added

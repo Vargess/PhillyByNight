@@ -78,17 +78,39 @@
   aside#details {
     width: 320px; flex-shrink: 0; background: var(--bg-2);
     border-left: 1px solid var(--border); overflow: hidden;
-    transition: width 0.15s;
     display: flex; flex-direction: column; min-height: 0;
   }
-  aside#details.collapsed { width: 0; padding: 0; border-left: none; }
-  aside#details #detailsBody {
-    flex: 0 1 auto; overflow-y: auto; max-height: 50%; min-height: 0;
+  /* Collapses instantly rather than over a transition. The panel used to animate its
+     width, but a width transition that stalls leaves the panel stuck open with the
+     class applied and no way to tell — the collapse silently stops working. Snapping
+     is always right; the 150ms slide was never worth that failure mode.
+     flex-basis and min-width are both set because this is a flex item of <main>:
+     width alone does not size it, and min-width defaults to auto, which refuses to
+     shrink below the room list's and stats grid's min-content width. */
+  aside#details.collapsed {
+    width: 0; min-width: 0; flex-basis: 0; padding: 0; border-left: none;
+    overflow: hidden;
   }
+  /* No shrink: the list below has hundreds of rows, and with a content-sized flex
+     basis it claimed the whole column and squeezed this to a sliver. */
+  aside#details #detailsBody {
+    flex: 0 0 auto; overflow-y: auto; max-height: 30%; min-height: 0;
+  }
+  /* Two label/value pairs per row: at one pair per row the statistics block ate a
+     third of the column, leaving the room list well under the half it should have. */
+  aside#details .stats { grid-template-columns: auto 1fr auto 1fr; gap: 3px 8px; }
+  /* basis 0, so it takes the slack left between details and statistics rather than
+     asking for its own content height — which is what keeps statistics on the floor
+     of the panel at any height. */
   aside#details #roomListSection {
-    flex: 1 1 50%; min-height: 50%;
+    flex: 1 1 0; min-height: 0;
     display: flex; flex-direction: column; min-width: 0;
     border-bottom: none; border-top: 1px solid var(--border);
+  }
+  aside#details #statsSection {
+    flex: 0 0 auto; margin-top: auto;
+    border-bottom: none; border-top: 1px solid var(--border);
+    background: var(--bg-2);
   }
   aside#details #roomListSection h2 { display: flex; justify-content: space-between; }
   aside#details #roomListSection h2 #roomListCount {
@@ -155,6 +177,10 @@
   #canvas .legend h3 {
     margin: 0 0 4px; font-size: 11px; color: var(--text-dim);
     text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  #canvas .legend .legend-room {
+    font-size: 11px; color: var(--text); font-weight: 600; margin-bottom: 4px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;
   }
   #canvas .legend .row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
   #canvas .legend .swatch {
@@ -443,10 +469,6 @@
           <h2>Filters</h2>
           <div id="filters"></div>
         </div>
-        <div class="sidebar-section">
-          <h2>Statistics</h2>
-          <div class="stats" id="stats"></div>
-        </div>
       </div>
       <div class="tab-panel" data-tab-panel="transit" style="display:none;">
         <div class="sidebar-section">
@@ -491,6 +513,10 @@
       <div class="sidebar-section" id="roomListSection">
         <h2>Rooms on this floor <span id="roomListCount"></span></h2>
         <div class="room-list" id="roomList"></div>
+      </div>
+      <div class="sidebar-section" id="statsSection">
+        <h2>Statistics</h2>
+        <div class="stats" id="stats"></div>
       </div>
     </aside>
   </main>
@@ -1195,6 +1221,7 @@ function render() {
   renderRooms();
   renderRoomList();
   renderHud();
+  buildLegend();   // the key describes the targeted room, so it follows the target
 }
 
 function currentRoomSet() {
@@ -1638,9 +1665,10 @@ function buildLegend() {
   const legend = document.getElementById('legend');
   legend.innerHTML = `<h3>${escapeHtml(labelForColorBy(state.colorBy))}</h3>`;
   if (state.colorBy === 'keyFeatures') {
-    // A fixed, small set of states, listed in the mapper's own precedence so the
-    // legend doubles as documentation of which colour wins when a room is several
-    // things at once.
+    const target = state.byKey.get(state.selectedKey || state.currentRoomKey);
+    if (target) { buildRoomFeatureList(legend, target); return; }
+    // Nothing targeted: fall back to the whole palette, listed in the mapper's own
+    // precedence so it doubles as documentation of which colour wins.
     legend.appendChild(legendRow(MAP_CURRENT_FILL, 'The room you are in'));
     for (const key of ROOM_STATE_ORDER) {
       const s = ROOM_STATE_STYLE[key];
@@ -1659,6 +1687,65 @@ function buildLegend() {
       seen.add(v);
       legend.appendChild(legendRow(roomColor(r), v));
     }
+  }
+  legend.style.display = 'block';
+}
+
+// Only what is true of the room you are looking at, rather than the whole palette.
+// Reading a key of eight entries to decode one room is work; this states the room.
+function buildRoomFeatureList(legend, r) {
+  const name = document.createElement('div');
+  name.className = 'legend-room';
+  name.textContent = r.name || r.key;
+  name.title = `${r.name || '(unnamed)'} — ${r.key}`;
+  legend.appendChild(name);
+
+  // Selecting a room makes it current, so this is effectively always true of the
+  // targeted room — it is here to explain the gold fill, not as news.
+  if (r.key === state.currentRoomKey) {
+    legend.appendChild(legendRow(MAP_CURRENT_FILL, 'Current room — shown gold'));
+  }
+  const st = ROOM_STATE_STYLE[roomState(r)];
+  legend.appendChild(legendRow(st.fill === 'none' ? 'transparent' : st.fill, st.label));
+
+  if (r.isHaven || r.havenClaimable) {
+    legend.appendChild(legendRow(MAP_HAVEN_RING,
+      r.isHaven
+        ? (r.havenIsLocked ? 'Haven ring — claimed, locked' : 'Haven ring — claimed')
+        : 'Haven ring — unclaimed'));
+  }
+
+  // Exit states actually present here, counted, rather than all three every time.
+  const exits = r.exits || [];
+  const counts = { open: 0, locked: 0, broken: 0 };
+  for (const e of exits) {
+    if (e.broken) counts.broken++;
+    else if (e.locked) counts.locked++;
+    else counts.open++;
+  }
+  const plural = (n) => (n === 1 ? 'exit' : 'exits');
+  if (counts.open) legend.appendChild(legendRow(EXIT_OPEN, `${counts.open} open ${plural(counts.open)}`));
+  if (counts.locked) legend.appendChild(legendRow(EXIT_LOCKED, `${counts.locked} locked ${plural(counts.locked)}`));
+  if (counts.broken) legend.appendChild(legendRow(EXIT_BROKEN, `${counts.broken} broken ${plural(counts.broken)}`));
+  if (!exits.length) legend.appendChild(legendRow('transparent', 'No exits recorded'));
+
+  const up = hasUpExit(r), down = hasDownExit(r);
+  if (up || down) {
+    legend.appendChild(legendRow(MAP_VERT_MARKER,
+      up && down ? '▲ ▼ stairs up and down' : up ? '▲ stairs up' : '▼ stairs down'));
+  }
+  const unknown = undrawableExitCount(r);
+  if (unknown) {
+    legend.appendChild(legendRow(MAP_VERT_MARKER,
+      `${unknown} ${plural(unknown)} to somewhere unknown`));
+  }
+  if (r.positionUncertain) {
+    legend.appendChild(legendRow('transparent', 'Position uncertain'));
+  }
+  if (r.placement && r.placement !== 'grid') {
+    legend.appendChild(legendRow('transparent',
+      r.placement === 'anchored' ? 'Position derived from a neighbour'
+        : 'Position estimated by dead reckoning'));
   }
   legend.style.display = 'block';
 }
@@ -1706,6 +1793,7 @@ function selectRoom(key) {
   renderRoomList();
   renderDetails();
   renderHud();
+  buildLegend();
 }
 
 // ============================================================== navigation
