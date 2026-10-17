@@ -8,6 +8,37 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 2026-10-17 — map-viewer.html (3)
+
+### Added
+- **Right-click a room to set where the viewer opens.** The menu also offers to reset
+  to the built-in default and to centre on the room. The choice is kept in
+  `localStorage` rather than in the map file — it is a browsing preference, not
+  something about the map, so it survives re-exporting. The chosen room carries an
+  orange outline so the setting is visible rather than invisible.
+
+### Changed
+- **"Rooms on this floor" moved to the right-hand panel**, taking half its height.
+  The details body is the half that is capped, so a room with many exits scrolls
+  rather than squeezing the list away.
+- **Filter groups run broadest to narrowest**: Neighborhood, Exposure tier, Primary
+  tag, Placement. Placement is an implementation detail of the mapper and now sits
+  last instead of first.
+- **The Floor and Colour-by selects are centred on the top bar.** The header is a
+  three-column grid with equal outer columns, so the middle cell stays dead centre
+  whatever the filename length or button count; the file name ellipsises instead of
+  pushing it off. Equal flex spacers were tried first and did not work — they only
+  centre when both sides happen to weigh the same, and the file-info line made the
+  left side much wider.
+
+### Fixed
+- A global `keydown` handler called `e.target.matches(...)`, but `e.target` is
+  `window` when nothing has focus, and `window` has no `matches`. The handler threw
+  and swallowed the rest of itself, so the key did nothing. Keyboard navigation and
+  Escape-to-deselect now work in that state.
+
+---
+
 ## 2026-10-17 — map-viewer.html (2)
 
 ### Changed

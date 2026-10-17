@@ -47,14 +47,23 @@
   input:focus, select:focus, button:focus { outline: 1px solid var(--accent-dim); outline-offset: 0; }
   /* -------------------------------------------------------------- layout */
   #app { display: flex; flex-direction: column; height: 100%; }
+  /* Three columns, the outer two equal: that puts the middle cell dead centre on the
+     bar no matter how long the filename or how many buttons there are, and the side
+     columns truncate instead of shoving it off-centre. */
   header {
-    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    display: grid; grid-template-columns: 1fr auto 1fr;
+    align-items: center; gap: 10px; padding: 8px 12px;
     background: var(--bg-2); border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
-  header h1 { margin: 0; font-size: 14px; font-weight: 600; color: var(--accent); }
-  header .file-info { font-size: 11px; color: var(--text-dim); margin-left: 8px; }
-  header .spacer { flex: 1; }
+  header .hdr-left { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  header .hdr-right { display: flex; justify-content: flex-end; min-width: 0; }
+  header h1 { margin: 0; font-size: 14px; font-weight: 600; color: var(--accent); flex-shrink: 0; }
+  header .file-info {
+    font-size: 11px; color: var(--text-dim); margin-left: 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  }
+  header .spacer { display: none; }   /* grid handles the spacing now */
   header .ctrl-group { display: flex; gap: 6px; align-items: center; }
   header label { font-size: 11px; color: var(--text-dim); }
   main { display: flex; flex: 1; min-height: 0; }
@@ -63,12 +72,29 @@
     border-right: 1px solid var(--border); overflow-y: auto;
     display: flex; flex-direction: column;
   }
+  /* Details on top, the floor's room list beneath it taking at least half the
+     column. The details body is capped rather than the list, so a long room with
+     many exits scrolls instead of squeezing the list out. */
   aside#details {
     width: 320px; flex-shrink: 0; background: var(--bg-2);
-    border-left: 1px solid var(--border); overflow-y: auto;
+    border-left: 1px solid var(--border); overflow: hidden;
     transition: width 0.15s;
+    display: flex; flex-direction: column; min-height: 0;
   }
   aside#details.collapsed { width: 0; padding: 0; border-left: none; }
+  aside#details #detailsBody {
+    flex: 0 1 auto; overflow-y: auto; max-height: 50%; min-height: 0;
+  }
+  aside#details #roomListSection {
+    flex: 1 1 50%; min-height: 50%;
+    display: flex; flex-direction: column; min-width: 0;
+    border-bottom: none; border-top: 1px solid var(--border);
+  }
+  aside#details #roomListSection h2 { display: flex; justify-content: space-between; }
+  aside#details #roomListSection h2 #roomListCount {
+    font-weight: normal; color: var(--text-faint);
+  }
+  aside#details #roomList { flex: 1 1 auto; max-height: none; min-height: 0; }
   section#canvas {
     flex: 1; min-width: 0; position: relative; background: var(--bg);
     overflow: hidden;
@@ -202,6 +228,23 @@
   .exit-connection.broken { fill: #e8c547; }
   .exit-connection.vertical { fill: #e8a530; }
   .exit-connection.bg-connection { filter: none; stroke: rgba(0,0,0,0.6); stroke-width: 0.3; }
+  /* Right-click menu on a room */
+  .room-menu {
+    position: fixed; z-index: 500; min-width: 190px;
+    background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.6); padding: 4px; font-size: 12px;
+  }
+  .room-menu-head {
+    padding: 4px 8px 6px; color: var(--text-faint); font-size: 11px;
+    border-bottom: 1px solid var(--border); margin-bottom: 4px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px;
+  }
+  .room-menu-item { padding: 5px 8px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+  .room-menu-item:hover { background: var(--bg-3, #2f2f38); }
+  .room-menu-item.disabled { color: var(--text-faint); cursor: default; }
+  .room-menu-item.disabled:hover { background: transparent; }
+  /* The room the viewer opens on, so the setting is visible rather than invisible. */
+  .room.home rect, .room.home circle { stroke: #ff9b30; stroke-width: 2.5; }
   .floor-label { font-size: 14px; fill: var(--text-faint); font-weight: 600; }
   /* .floor-label kept around in case future renderers want to draw it on the
      canvas again; currently the floor name lives in the HUD instead. */
@@ -358,10 +401,13 @@
 <body>
 <div id="app">
   <header>
-    <h1>PbN Map Viewer</h1>
-    <span class="file-info" id="fileInfo">drop or load a JSON to begin</span>
-    <div class="spacer"></div>
-    <div class="ctrl-group">
+    <div class="hdr-left">
+      <h1>PbN Map Viewer</h1>
+      <span class="file-info" id="fileInfo">drop or load a JSON to begin</span>
+    </div>
+    <!-- The selects sit in their own group between two equal spacers, so they stay
+         centred in the bar regardless of how wide the title or button group get. -->
+    <div class="ctrl-group ctrl-centre">
       <label for="floorSel">Floor:</label>
       <select id="floorSel" disabled><option>—</option></select>
       <label for="colorBy">Color by:</label>
@@ -373,6 +419,8 @@
         <option value="haven">Haven status</option>
         <option value="neighborhood">Neighborhood</option>
       </select>
+    </div>
+    <div class="ctrl-group hdr-right">
       <button id="fitBtn" title="Fit all visible rooms in view (F)">⛶ Fit</button>
       <button id="centerBtn" title="Reset zoom and pan (R)">⌖ Reset</button>
       <button id="toggleDetailsBtn" title="Toggle details panel">»</button>
@@ -398,10 +446,6 @@
         <div class="sidebar-section">
           <h2>Statistics</h2>
           <div class="stats" id="stats"></div>
-        </div>
-        <div class="sidebar-section" style="flex:1; display:flex; flex-direction:column; min-height:0;">
-          <h2>Rooms on this floor <span id="roomListCount" style="float:right; font-weight:normal; color:var(--text-faint);"></span></h2>
-          <div class="room-list" id="roomList" style="flex:1;"></div>
         </div>
       </div>
       <div class="tab-panel" data-tab-panel="transit" style="display:none;">
@@ -443,6 +487,10 @@
           Click a room to see its details.
           <div class="hint">Drag/drop or load a JSON in the top bar to begin.</div>
         </div>
+      </div>
+      <div class="sidebar-section" id="roomListSection">
+        <h2>Rooms on this floor <span id="roomListCount"></span></h2>
+        <div class="room-list" id="roomList"></div>
       </div>
     </aside>
   </main>
@@ -730,10 +778,29 @@ function ingest(data, name) {
 // Where a freshly loaded map should land. availableFloors is sorted high-to-low, so
 // the old selectFloor(availableFloors[0]) opened on the topmost floor — typically a
 // rooftop or two — and fitAll() then zoomed to that handful of rooms.
-const HOME_KEY = '16,59,0';
+const HOME_KEY_DEFAULT = '16,59,0';
+const HOME_STORAGE_KEY = 'pbn_viewer_home_v1';
+
+function getHomeKey() {
+  try {
+    return localStorage.getItem(HOME_STORAGE_KEY) || HOME_KEY_DEFAULT;
+  } catch (e) {
+    return HOME_KEY_DEFAULT;   // private windows can refuse storage entirely
+  }
+}
+
+function setHomeKey(key) {
+  try {
+    if (key) localStorage.setItem(HOME_STORAGE_KEY, key);
+    else localStorage.removeItem(HOME_STORAGE_KEY);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
 
 function openAtHome() {
-  const home = state.byKey.get(HOME_KEY);
+  const home = state.byKey.get(getHomeKey());
   if (home && home.placed) {
     selectFloor(home.z);
     state.view.scale = 1;
@@ -906,11 +973,13 @@ function buildFilters() {
 
   const container = document.getElementById('filters');
   container.innerHTML = '';
+  // Broadest grouping first, narrowest last: neighbourhood is how you usually think
+  // about where you are, placement is an implementation detail of the mapper.
   const groups = [
-    { key: 'placement', label: 'Placement', values: counts.placement },
-    { key: 'primaryTag', label: 'Primary tag', values: counts.primaryTag },
+    { key: 'neighborhood', label: 'Neighborhood', values: counts.neighborhood },
     { key: 'exposureTier', label: 'Exposure tier', values: counts.exposureTier },
-    { key: 'neighborhood', label: 'Neighborhood', values: counts.neighborhood }
+    { key: 'primaryTag', label: 'Primary tag', values: counts.primaryTag },
+    { key: 'placement', label: 'Placement', values: counts.placement }
   ];
   for (const g of groups) {
     if (g.values.size === 0) continue;
@@ -1417,6 +1486,64 @@ function roomAdornments(r) {
   return out;
 }
 
+// Right-click menu on a room. Its main job is choosing where the viewer opens, so
+// that preference lives in localStorage rather than in the map file — it is about
+// how you like to browse, not about the map itself, and it survives re-exports.
+let roomMenuEl = null;
+
+function hideRoomMenu() {
+  if (roomMenuEl) { roomMenuEl.remove(); roomMenuEl = null; }
+}
+
+function showRoomMenu(clientX, clientY, r) {
+  hideRoomMenu();
+  const menu = document.createElement('div');
+  menu.className = 'room-menu';
+  menu.style.left = clientX + 'px';
+  menu.style.top = clientY + 'px';
+
+  const header = document.createElement('div');
+  header.className = 'room-menu-head';
+  header.textContent = r.name || r.key;
+  menu.appendChild(header);
+
+  const add = (label, fn, disabled) => {
+    const it = document.createElement('div');
+    it.className = 'room-menu-item' + (disabled ? ' disabled' : '');
+    it.textContent = label;
+    if (!disabled) it.addEventListener('click', () => { hideRoomMenu(); fn(); });
+    menu.appendChild(it);
+    return it;
+  };
+
+  const isHome = getHomeKey() === r.key;
+  add(isHome ? '✓ Opens here by default' : 'Set as default load position', () => {
+    if (!setHomeKey(r.key)) {
+      alert('Could not save the default position — this browser is blocking storage.');
+      return;
+    }
+    renderRooms();   // refresh the home marker
+  }, isHome);
+
+  if (getHomeKey() !== HOME_KEY_DEFAULT) {
+    add('Reset default to ' + HOME_KEY_DEFAULT, () => { setHomeKey(null); renderRooms(); });
+  }
+  add('Centre on this room', () => { state.view.scale = 1; autoCenterOn(r); });
+
+  document.body.appendChild(menu);
+  // Keep it on screen when right-clicking near an edge.
+  const box = menu.getBoundingClientRect();
+  if (box.right > window.innerWidth) menu.style.left = (window.innerWidth - box.width - 4) + 'px';
+  if (box.bottom > window.innerHeight) menu.style.top = (window.innerHeight - box.height - 4) + 'px';
+  roomMenuEl = menu;
+}
+
+window.addEventListener('mousedown', (e) => {
+  if (roomMenuEl && !roomMenuEl.contains(e.target)) hideRoomMenu();
+});
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideRoomMenu(); });
+window.addEventListener('blur', hideRoomMenu);
+
 function renderRooms() {
   const g = document.getElementById('roomsLayer');
   g.innerHTML = '';
@@ -1451,6 +1578,7 @@ function renderRooms() {
       + (r.placement === null ? ' placement-null' : '')
       + (r.key === state.selectedKey ? ' selected' : '')
       + (isCurrent ? ' current' : '')
+      + (r.key === getHomeKey() ? ' home' : '')
       + (noExits ? ' no-exits' : '');
     const gEl = svgEl('g', {
       class: cls,
@@ -1479,6 +1607,10 @@ function renderRooms() {
       // Clicking also makes it the current room for keyboard nav.
       state.currentRoomKey = r.key;
       renderHud();
+    });
+    gEl.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      showRoomMenu(ev.clientX, ev.clientY, r);
     });
     g.appendChild(gEl);
   }
@@ -1911,7 +2043,11 @@ document.querySelectorAll('.tabs .tab').forEach((btn) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  if (e.target.matches('input, select, textarea')) return;
+  // e.target is window when no element has focus, and window has no .matches —
+  // calling it blindly threw and swallowed the rest of this handler, so the key
+  // simply did nothing.
+  const t = e.target;
+  if (t && typeof t.matches === 'function' && t.matches('input, select, textarea')) return;
 
   // Resolve the direction: prefer e.code (which distinguishes numpad from
   // the main row), but fall back to a derived code from e.key so simulated
