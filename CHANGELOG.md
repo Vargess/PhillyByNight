@@ -8,6 +8,19 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 2026-10-17 — map-viewer.html (6)
+
+### Fixed
+- **Filter groups no longer scroll inside themselves while the sidebar has height to
+  spare.** Each group's value list was capped at 180px with its own scrollbar, so
+  Primary tag — 25 values, 592px — scrolled in a small box no matter how tall the
+  window was. The cap is gone: groups render at full height, the filters section is
+  the only thing that scrolls, and it does so only once the content genuinely exceeds
+  the column. On a 900px window that means no wasted space; on a tall one, nothing
+  scrolls at all.
+
+---
+
 ## 2026-10-17 — map-viewer.html (5)
 
 ### Changed

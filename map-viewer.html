@@ -140,7 +140,11 @@
   .stats { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; }
   .stats .label { color: var(--text-dim); }
   .stats .value { font-variant-numeric: tabular-nums; }
-  .filter-list { display: flex; flex-direction: column; gap: 3px; max-height: 180px; overflow-y: auto; }
+  /* No per-group cap or scrollbar: each group used to be boxed at 180px and scroll
+     inside itself even when the column had height going spare. The groups now render
+     at full height and the filters section is the only thing that scrolls, so the
+     available space is used up before anything needs scrolling at all. */
+  .filter-list { display: flex; flex-direction: column; gap: 3px; }
   .filter-list label {
     display: flex; align-items: center; gap: 6px;
     padding: 2px 4px; border-radius: 3px; cursor: pointer; font-size: 12px;
