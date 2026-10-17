@@ -176,31 +176,31 @@
   .room:hover rect { stroke: var(--accent); stroke-width: 2; }
   .room.placement-reckoned rect { stroke-dasharray: 3 2; }
   .room.placement-null rect { stroke-dasharray: 1 2; opacity: 0.5; }
-  /* Rooms with no exit arrow drawn on the map (sewer rooms with only passage
-     exits, unresolved targets, etc.) — neutral gray fill, dashed outline. */
-  .room.no-exits rect {
-    fill: #4a4a55;
-    stroke: rgba(255, 255, 255, 0.35);
-    stroke-dasharray: 3 2;
-  }
-  .room.no-exits.selected rect { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 3 2; }
+  /* Rooms whose exits could not be drawn used to be greyed out wholesale, which
+     overpainted haven and stairwell colouring. The mapper instead marks the count
+     of undrawable exits in the corner, so the room keeps its real colour. */
   .room.no-exits.bg-room rect { opacity: 0.85; }   /* keep faded relative to current floor */
   .room text { font-size: 9px; fill: rgba(255,255,255,0.55); pointer-events: none; }
-  .exit { stroke: #4a4a55; stroke-width: 1; fill: none; }
-  .exit.locked { stroke: var(--danger); }
-  .exit.broken { stroke: var(--warn); stroke-dasharray: 2 2; }
+  /* Exit colours match PbN-Mapper.user.js: green open, red locked, yellow
+     broken, with the blocked two dashed exactly as the mapper dashes them. */
+  .exit { stroke: #5fcf6a; stroke-width: 1.2; fill: none; }
+  .exit.locked { stroke: #e8584a; stroke-dasharray: 3 3; }
+  .exit.broken { stroke: #e8c547; stroke-dasharray: 3 3; }
   .exit.hidden { display: none; }
   /* Directional arrows that mark each connection. The triangle's tip points
      from the source toward the target, so when two rooms share an edge each
      side's arrow shows which way the connection flows. */
+  /* Arrowheads take the colour of the exit they belong to, so the direction
+     cue the viewer adds does not fight the mapper's palette. */
   .exit-connection {
-    fill: #ffd700;
+    fill: #5fcf6a;
     stroke: #1a1a20;
     stroke-width: 0.4;
     pointer-events: none;
-    filter: drop-shadow(0 0 3px rgba(255, 215, 0, 0.45));
   }
-  .exit-connection.vertical { fill: #ffb700; }
+  .exit-connection.locked { fill: #e8584a; }
+  .exit-connection.broken { fill: #e8c547; }
+  .exit-connection.vertical { fill: #e8a530; }
   .exit-connection.bg-connection { filter: none; stroke: rgba(0,0,0,0.6); stroke-width: 0.3; }
   .floor-label { font-size: 14px; fill: var(--text-faint); font-weight: 600; }
   /* .floor-label kept around in case future renderers want to draw it on the
@@ -487,25 +487,75 @@ function hasResource(r) {
   return Array.isArray(r.features) && r.features.some(
     (f) => /resource|bench|craft|forge|workshop|loom|study|library/i.test(f));
 }
-// Priority-ordered features. The first match wins so the most important
-// attribute paints over the others (a transit station that's also a haven
-// still reads as a transit station).
-const FEATURE_PRIORITY = [
-  { test: isTransitStation,   key: 'transit',     label: 'Transit station',     color: '#ffd700' },
-  { test: (r) => r.isHaven,    key: 'haven',       label: 'Haven (claimed)',     color: '#d97000' },
-  { test: hasVerticalExit,     key: 'vertical',    label: 'Has up/down exit',    color: '#4ecdc4' },
-  { test: hasLockableExit,     key: 'lockable',    label: 'Has locked/broken door', color: '#3aaa3a' },
-  { test: hasResource,         key: 'resource',    label: 'Resource / crafting', color: '#e060a0' },
-  { test: (r) => r.havenClaimable, key: 'claimable', label: 'Claimable haven',     color: '#f0a060' }
-];
-const FEATURE_COLOR_DEFAULT = '#3a4a7a';
-function featureColor(r) {
-  for (const f of FEATURE_PRIORITY) if (f.test(r)) return f.color;
-  return FEATURE_COLOR_DEFAULT;
+// ---------------------------------------------------------------------------
+// Room and exit palette, kept identical to PbN-Mapper.user.js so a room reads
+// the same way whichever tool you are looking at it in. Precedence is the
+// mapper's: a haven outranks a stairwell, because a haven is the thing you go
+// looking for, and the current room outranks everything.
+const MAP_CURRENT_FILL = '#e8c547', MAP_CURRENT_STROKE = '#ffffff';
+const MAP_HAVEN_RING = '#ff9b30';
+const MAP_VERT_MARKER = '#e8a530';
+const EXIT_OPEN = '#5fcf6a', EXIT_LOCKED = '#e8584a', EXIT_BROKEN = '#e8c547';
+
+const ROOM_STATE_STYLE = {
+  unvisited: { fill: 'none',    stroke: '#666',    label: 'Known of, not yet visited' },
+  vehicle:   { fill: '#1d7c72', stroke: '#4ecdc4', label: 'Vehicle — in transit' },
+  haven:     { fill: '#a85416', stroke: '#e08a45', label: 'Haven — claimed' },
+  claimable: { fill: '#f0a34a', stroke: '#ffd7a3', label: 'Haven — unclaimed' },
+  vertBoth:  { fill: '#2fb3d9', stroke: '#b8f0ff', label: 'Connects up and down' },
+  vertOne:   { fill: '#1b6178', stroke: '#5fc8e6', label: 'Connects one way vertically' },
+  plain:     { fill: '#3d6fa5', stroke: '#7fa8d9', label: 'Standard room' }
+};
+const ROOM_STATE_ORDER = ['haven', 'claimable', 'vertBoth', 'vertOne',
+  'vehicle', 'plain', 'unvisited'];
+
+const hasUpExit = (r) => (r.exits || []).some((e) => e.direction === 'up');
+const hasDownExit = (r) => (r.exits || []).some((e) => e.direction === 'down');
+
+function roomState(r) {
+  if (!r.visited) return 'unvisited';
+  if (r.isVehicle) return 'vehicle';
+  if (r.isHaven) return 'haven';
+  if (r.havenClaimable) return 'claimable';
+  const up = hasUpExit(r), down = hasDownExit(r);
+  if (up && down) return 'vertBoth';
+  if (up || down) return 'vertOne';
+  return 'plain';
 }
-function featureLabel(r) {
-  for (const f of FEATURE_PRIORITY) if (f.test(r)) return f.label;
-  return 'Standard';
+
+const featureColor = (r) => ROOM_STATE_STYLE[roomState(r)].fill;
+const featureStroke = (r) => ROOM_STATE_STYLE[roomState(r)].stroke;
+const featureLabel = (r) => ROOM_STATE_STYLE[roomState(r)].label;
+
+// Exits the mapper cannot draw a line for: the destination is unknown and the
+// direction carries no bearing, so it shows the count instead of inventing one.
+function undrawableExitCount(r) {
+  return (r.exits || []).filter((e) =>
+    e.direction !== 'up' && e.direction !== 'down' && !mapperExitTarget(r, e)).length;
+}
+
+const exitColor = (e) => (e.broken ? EXIT_BROKEN : e.locked ? EXIT_LOCKED : EXIT_OPEN);
+
+// The mapper's exit resolution, which the viewer previously did not share. It
+// prefers the server's own targetRoomId, but falls back to compass arithmetic —
+// and that fallback matters enormously here, because only 360 of this save's 801
+// exits carry a targetRoomId at all. Without it the viewer silently drew nothing
+// for the rest, so most of the surface looked like unconnected rooms.
+//   known:true  -> we have the destination room, draw the full line
+//   known:false -> we only know the bearing, draw a half-length stub
+function mapperExitTarget(r, e) {
+  if (e.targetRoomId != null) {
+    let t = state.byId.get(e.targetRoomId);
+    if (!t) {
+      const coord = state.targetIdToCoord.get(e.targetRoomId);
+      if (coord) t = state.byKey.get(coord);
+    }
+    if (t && t.x != null) return { x: t.x, y: t.y, z: t.z, room: t, known: true };
+  }
+  const off = COMPASS[e.direction];
+  if (!off) return null;                       // "passage 3" and friends: no bearing
+  const dz = e.direction === 'up' ? 1 : e.direction === 'down' ? -1 : 0;
+  return { x: r.x + off[0], y: r.y + off[1], z: r.z + dz, room: null, known: false };
 }
 
 // Color palettes for each coloring scheme
@@ -1106,13 +1156,15 @@ function renderExits() {
     const keySet = new Set(set.map((r) => r.key));
     for (const r of set) {
       for (const e of r.exits) {
-        const target = resolveExitTarget(e, r);
-        if (!target || target.z !== r.z) continue;
-        if (!keySet.has(target.key)) continue;
+        const t = mapperExitTarget(r, e);
+        if (!t || t.z !== r.z) continue;
+        const full = t.known && t.room && keySet.has(t.room.key);
+        const f = full ? 1 : 0.45;
         const cls = 'exit bg-exit' + (e.locked ? ' locked' : '') + (e.broken ? ' broken' : '');
         const line = svgEl('line', {
           x1: (r.x + 0.5) * CELL, y1: (r.y + 0.5) * CELL,
-          x2: (target.x + 0.5) * CELL, y2: (target.y + 0.5) * CELL,
+          x2: (r.x + 0.5 + (t.x - r.x) * f) * CELL,
+          y2: (r.y + 0.5 + (t.y - r.y) * f) * CELL,
           class: cls, opacity: layer.opacity
         });
         g.appendChild(line);
@@ -1121,7 +1173,8 @@ function renderExits() {
         const pts = exitArrowPoints(r, e);
         if (!pts) continue;
         g.appendChild(svgEl('polygon', {
-          points: pts, class: 'exit-connection bg-connection',
+          points: pts,
+          class: 'exit-connection bg-connection' + (e.broken ? ' broken' : e.locked ? ' locked' : ''),
           opacity: layer.opacity * 1.4   // bump so the arrow head doesn't vanish
         }));
       }
@@ -1131,14 +1184,18 @@ function renderExits() {
   const set = new Set(currentRoomSet().map((r) => r.key));
   for (const r of currentRoomSet()) {
     for (const e of r.exits) {
-      const target = resolveExitTarget(e, r);
-      if (!target || target.z !== r.z) continue;
-      if (!set.has(target.key)) continue;        // skip if target filtered out
+      const t = mapperExitTarget(r, e);
+      if (!t || t.z !== r.z) continue;
+      // Full line only when we actually have the destination and it is on show;
+      // otherwise a half stub, which reads as "a way out, destination unknown".
+      const full = t.known && t.room && set.has(t.room.key);
+      const f = full ? 1 : 0.45;
       const cls = 'exit' + (e.locked ? ' locked' : '') + (e.broken ? ' broken' : '');
       const line = svgEl('line', {
         x1: (r.x + 0.5) * CELL, y1: (r.y + 0.5) * CELL,
-        x2: (target.x + 0.5) * CELL, y2: (target.y + 0.5) * CELL,
-        class: cls, opacity: 0.55
+        x2: (r.x + 0.5 + (t.x - r.x) * f) * CELL,
+        y2: (r.y + 0.5 + (t.y - r.y) * f) * CELL,
+        class: cls, opacity: 0.85
       });
       g.appendChild(line);
       // Directional arrow at the source cell's edge (or corner for diagonals)
@@ -1147,7 +1204,8 @@ function renderExits() {
       const pts = exitArrowPoints(r, e);
       if (!pts) continue;
       g.appendChild(svgEl('polygon', {
-        points: pts, class: 'exit-connection'
+        points: pts,
+        class: 'exit-connection' + (e.broken ? ' broken' : e.locked ? ' locked' : '')
       }));
     }
   }
@@ -1157,8 +1215,6 @@ function renderExits() {
     if (!Array.isArray(r.exits)) continue;
     for (const e of r.exits) {
       if (e.direction !== 'up' && e.direction !== 'down') continue;
-      const target = resolveExitTarget(e, r);
-      if (!target) continue;
       const pts = exitArrowPoints(r, e);
       if (!pts) continue;
       g.appendChild(svgEl('polygon', {
@@ -1256,6 +1312,82 @@ function roomHasVisibleExit(r) {
   return false;
 }
 
+// The mapper draws vehicles as circles and everything else as a rounded square,
+// filled by room state, with the current room overriding to gold. Same here.
+function roomShape(r, isCurrent) {
+  const st = roomState(r);
+  const size = CELL - ROOM_PAD * 2;
+  // Shape is identity and stays constant; colour follows whichever scheme is
+  // selected, so the viewer's other analysis modes keep working. Only the
+  // default "key features" mode uses the mapper's own fills and strokes.
+  const keyed = state.colorBy === 'keyFeatures';
+  const fill = isCurrent ? MAP_CURRENT_FILL : roomColor(r);
+  const stroke = isCurrent ? MAP_CURRENT_STROKE
+    : (keyed ? featureStroke(r) : darken(roomColor(r)));
+
+  // Shape comes from isVehicle alone, as in the mapper — a train car you have
+  // only heard of is still a train car, so it stays a circle while unvisited.
+  const shape = r.isVehicle
+    ? svgEl('circle', { cx: CELL / 2, cy: CELL / 2, r: size / 2, fill, stroke })
+    : svgEl('rect', { x: ROOM_PAD, y: ROOM_PAD, width: size, height: size,
+      rx: 3, ry: 3, fill, stroke });
+
+  if (!isCurrent && (st === 'unvisited' || r.positionUncertain)) {
+    shape.setAttribute('stroke-dasharray', '2 2');
+  }
+  return shape;
+}
+
+// Haven ring, vertical markers and the undrawable-exit count — the mapper's
+// extra marks, in its colours and positions.
+function roomAdornments(r) {
+  const out = [];
+  if (!r.visited || r.isVehicle) return out;
+  const size = CELL - ROOM_PAD * 2;
+
+  if (r.isHaven || r.havenClaimable) {
+    const pad = 2;
+    const ring = svgEl('rect', {
+      x: ROOM_PAD - pad, y: ROOM_PAD - pad,
+      width: size + pad * 2, height: size + pad * 2,
+      rx: 4, ry: 4, fill: 'none', stroke: MAP_HAVEN_RING, 'stroke-width': 1.3
+    });
+    // Dashed means "not yours to walk into": unclaimed, or claimed but locked.
+    if (!r.isHaven || r.havenIsLocked) ring.setAttribute('stroke-dasharray', '3 2');
+    out.push(ring);
+  }
+
+  // Counter-flipped so the glyphs are not upside down after the wrapper's y flip.
+  const glyph = (ch, y) => {
+    const t = svgEl('text', {
+      x: CELL / 2, y, 'text-anchor': 'middle', 'dominant-baseline': 'middle',
+      'font-size': 7, fill: MAP_VERT_MARKER, transform: 'scale(1, -1)'
+    });
+    t.textContent = ch;
+    t.style.pointerEvents = 'none';
+    return t;
+  };
+  if (hasUpExit(r)) out.push(glyph('▲', -(ROOM_PAD - 2)));
+  if (hasDownExit(r)) out.push(glyph('▼', -(CELL - ROOM_PAD + 2)));
+
+  const undrawable = undrawableExitCount(r);
+  if (undrawable) {
+    const t = svgEl('text', {
+      x: CELL - ROOM_PAD + 1, y: -(CELL - ROOM_PAD + 1),
+      'text-anchor': 'middle', 'dominant-baseline': 'middle',
+      'font-size': 7, fill: EXIT_BROKEN, 'font-weight': 'bold',
+      transform: 'scale(1, -1)'
+    });
+    t.textContent = String(undrawable);
+    t.style.pointerEvents = 'none';
+    const tip = svgEl('title');
+    tip.textContent = `${undrawable} exit${undrawable > 1 ? 's' : ''} leading somewhere unknown`;
+    t.appendChild(tip);
+    out.push(t);
+  }
+  return out;
+}
+
 function renderRooms() {
   const g = document.getElementById('roomsLayer');
   g.innerHTML = '';
@@ -1277,14 +1409,7 @@ function renderRooms() {
         'data-key': r.key,
         style: `--bg-opacity: ${layer.opacity}`
       });
-      const rect = svgEl('rect', {
-        x: ROOM_PAD, y: ROOM_PAD,
-        width: CELL - ROOM_PAD * 2, height: CELL - ROOM_PAD * 2,
-        rx: 3, ry: 3,
-        fill: roomColor(r),
-        stroke: darken(roomColor(r))
-      });
-      gEl.appendChild(rect);
+      gEl.appendChild(roomShape(r, false));
       g.appendChild(gEl);
     }
   }
@@ -1303,18 +1428,13 @@ function renderRooms() {
       transform: `translate(${r.x * CELL}, ${r.y * CELL})`,
       'data-key': r.key
     });
-    const rect = svgEl('rect', {
-      x: ROOM_PAD, y: ROOM_PAD,
-      width: CELL - ROOM_PAD * 2, height: CELL - ROOM_PAD * 2,
-      rx: 3, ry: 3,
-      fill: roomColor(r),
-      stroke: darken(roomColor(r))
-    });
-    gEl.appendChild(rect);
+    gEl.appendChild(roomShape(r, isCurrent));
     // Show label on hover via title; SVG <title> is the standard way.
     const title = svgEl('title');
-    title.textContent = `${r.name || '(unnamed)'} — ${r.key}${r.id != null ? ' (id ' + r.id + ')' : ''}`;
+    title.textContent = `${r.name || '(unnamed)'} — ${r.key}`
+      + `${r.id != null ? ' (id ' + r.id + ')' : ''}\n${featureLabel(r)}`;
     gEl.appendChild(title);
+    for (const extra of roomAdornments(r)) gEl.appendChild(extra);
     // A small triangle on top of the current room — like a MUD client cursor.
     // Counter-flip so it still points down at the room after the wrapper flips y.
     if (isCurrent) {
@@ -1357,12 +1477,19 @@ function buildLegend() {
   const legend = document.getElementById('legend');
   legend.innerHTML = `<h3>${escapeHtml(labelForColorBy(state.colorBy))}</h3>`;
   if (state.colorBy === 'keyFeatures') {
-    // The focused palette has a fixed, small set of categories — list them
-    // explicitly so users see exactly what each colour means.
-    legend.appendChild(legendRow(FEATURE_COLOR_DEFAULT, 'Standard'));
-    for (const f of FEATURE_PRIORITY) {
-      legend.appendChild(legendRow(f.color, f.label));
+    // A fixed, small set of states, listed in the mapper's own precedence so the
+    // legend doubles as documentation of which colour wins when a room is several
+    // things at once.
+    legend.appendChild(legendRow(MAP_CURRENT_FILL, 'The room you are in'));
+    for (const key of ROOM_STATE_ORDER) {
+      const s = ROOM_STATE_STYLE[key];
+      legend.appendChild(legendRow(s.fill === 'none' ? 'transparent' : s.fill, s.label));
     }
+    legend.appendChild(legendRow(EXIT_OPEN, 'Exit — open'));
+    legend.appendChild(legendRow(EXIT_LOCKED, 'Exit — locked'));
+    legend.appendChild(legendRow(EXIT_BROKEN, 'Exit — broken'));
+    legend.appendChild(legendRow(MAP_HAVEN_RING, 'Haven ring (dashed = unclaimed or locked)'));
+    legend.appendChild(legendRow(MAP_VERT_MARKER, '▲ ▼ stairs, and unknown-exit count'));
   } else {
     const seen = new Set();
     for (const r of state.rooms) {

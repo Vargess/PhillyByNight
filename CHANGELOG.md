@@ -8,6 +8,49 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 2026-10-17 — map-viewer.html
+
+The viewer had grown its own visual language, so the same room looked like two
+different things depending on which tool you opened. It now shares the mapper's.
+
+### Changed
+- **Room colours are the mapper's**, in the mapper's precedence: current room gold,
+  claimed haven dark orange, unclaimed haven light orange, both-ways vertical bright
+  cyan, one-way vertical dark cyan, standard blue, unvisited an outline only. The old
+  scheme led with "transit station" and painted havens and stairwells underneath it.
+- **Vehicles are circles**, chosen from `isVehicle` alone, so a train car you have
+  only heard of is still a circle while unvisited.
+- **Exit lines are green open, red locked, yellow broken**, with the blocked two
+  dashed. Previously all exits were one grey and broken ones shared locked's colour.
+  The viewer's directional arrowheads keep their extra information but now take the
+  colour of the exit they belong to.
+- Haven rings, `▲`/`▼` stair markers and the undrawable-exit count were added to
+  match the mapper's marks.
+- The legend lists the states in precedence order, so it doubles as an explanation of
+  which colour wins when a room is several things at once.
+
+### Fixed
+- **The viewer drew far fewer exits than the mapper.** It would only draw a line when
+  an exit carried a `targetRoomId`, and only 360 of this save's 801 exits do — so most
+  of the surface appeared as unconnected rooms. It now uses the mapper's resolution:
+  `targetRoomId` where present, compass arithmetic otherwise, and a half-length stub
+  when only the bearing is known. Street level went from 51 drawn exits to 426, which
+  matches the mapper's own count exactly.
+- Rooms whose exits could not be drawn were greyed out wholesale, painting over haven
+  and stairwell colouring. They keep their real colour now, with the count of unknown
+  exits marked in the corner as the mapper does it.
+
+### Notes
+- The alternative colouring schemes (primary tag, exposure, placement, neighbourhood,
+  haven) are unchanged and still available; only the default "key features" mode
+  mirrors the mapper.
+- The viewer still resolves a few exits the mapper cannot, because it infers id-to-
+  coordinate mappings across the whole file at once rather than as rooms arrive. On
+  sublevel 1 that is 101 lines against the mapper's 96. It is extra knowledge rather
+  than a disagreement, so it was left in place.
+
+---
+
 ## 3.6.1 — 2026-10-16
 
 ### Fixed

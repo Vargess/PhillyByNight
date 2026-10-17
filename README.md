@@ -15,7 +15,7 @@ It runs only on `https://philadelphiabynight.net/play*`.
 | File | What it is |
 | --- | --- |
 | `PbN-Mapper.user.js` | The userscript. This is the thing you install. |
-| `map-viewer.html` | A standalone offline viewer for an exported map file. Open it in any browser and drag a JSON onto it. |
+| `map-viewer.html` | A standalone offline viewer for an exported map file. Open it in any browser and drag a JSON onto it. It draws rooms and exits exactly as the mapper does, and adds filtering, search and alternative colouring schemes for picking the map apart. |
 
 ---
 
