@@ -8,6 +8,38 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 2026-11-03 — map-viewer.html (8)
+
+### Added
+- **Merge two or more map files.** A `⊕ Merge` button in the top bar takes any
+  number of files, and dropping several onto the window at once does the same. The
+  map already on screen is the first input, so merging adds to what you are looking
+  at instead of replacing it.
+  - Rooms are matched on their key and resolved with the mapper's own import rule —
+    visited beats unvisited, then the more recent `lastSeen` wins, ties to the file
+    named later. A room is taken whole from one side or the other, never blended.
+  - Transit links are pooled and de-duplicated on the sorted pair, matching the
+    mapper's `addTransitEdge`, so merging a file twice doesn't double its lines.
+    Floor labels are kept from the first file that names a floor.
+  - A report shows each file's contribution (new / replaced / ignored as older) and
+    lists **every cell where the two maps describe different rooms** — the case
+    where a merge silently loses one of them. Each is shown with both names, both
+    ids and which file won.
+  - **Save merged map…** writes `pbn-map_merged_YYYYMMDD.json`, which the mapper's
+    *Import map JSON…* accepts. Nothing touches the disk until that button is
+    pressed, and the source files are never modified.
+- The viewer gained a general modal dialog, dismissed with Escape, the backdrop or
+  Close, and the map's keyboard navigation is suspended while one is open.
+
+### Changed
+- `ingest()`'s format sniffing is split out as `bundleOf()`, so merging reads a
+  file's contents without loading it. The merged bundle goes back through `ingest()`
+  unchanged, which means a merged map is normalised, indexed and drawn by exactly
+  the same code as a file loaded from disk.
+- Dropping a **single** file still loads it, as before. Only a multi-file drop merges.
+
+---
+
 ## 3.7.0 — 2026-11-02
 
 ### Added

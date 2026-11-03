@@ -15,7 +15,7 @@ It runs only on `https://philadelphiabynight.net/play*`.
 | File | What it is |
 | --- | --- |
 | `PbN-Mapper.user.js` | The userscript. This is the thing you install. |
-| `map-viewer.html` | A standalone offline viewer for an exported map file. Open it in any browser and drag a JSON onto it. It draws rooms and exits exactly as the mapper does, and adds filtering, search and alternative colouring schemes for picking the map apart. |
+| `map-viewer.html` | A standalone offline viewer for an exported map file. Open it in any browser and drag a JSON onto it. It draws rooms and exits exactly as the mapper does, and adds filtering, search, alternative colouring schemes and [merging](#merging-maps) for picking the map apart. |
 
 ---
 
@@ -191,6 +191,41 @@ mid-sweep abandons the rest rather than firing searches into the room you've jus
 reached.
 
 A full sweep takes about 16 seconds.
+
+---
+
+## Merging maps
+
+`map-viewer.html` can combine several exports into one — a map from a second
+machine, a friend's export, or a file from before you cleared something by mistake.
+
+Press **⊕ Merge** and pick one or more files, or drop several onto the window at
+once. Whatever is already on screen counts as the first input, so Merge adds to the
+map you are looking at rather than replacing it; with nothing loaded, pick two files
+and it combines those.
+
+Rooms are matched on their key — `16,59,0` for a placed room, `sewer-200` for one
+the server only gave an id — and resolved with the same rule the mapper uses for
+*Import map JSON…*:
+
+- a **visited** record beats one that was only ever seen from a doorway;
+- between two visited records, the one **seen more recently** wins;
+- ties go to the file named later.
+
+A room is taken whole from one file or the other, never blended, so you can't end up
+with a record that never existed. Transit links are pooled and de-duplicated in both
+directions, and a floor keeps the name the first file gave it.
+
+Afterwards a summary shows what each file contributed — rooms new, rooms that
+replaced an older copy, rooms ignored as older — and, importantly, **any cell where
+the two maps describe different rooms**. That's the case where merging loses
+something: two files disagree about what lives at `14,56,-1`, one of them wins, and
+the other room is gone. Each one is listed with both names and which file won.
+
+Nothing is written to disk until you press **Save merged map…**, which writes
+`pbn-map_merged_YYYYMMDD.json`. That file loads in the viewer and imports into the
+mapper through *Import map JSON…* like any other export. Your original files are
+never modified.
 
 ---
 

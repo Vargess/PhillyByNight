@@ -295,6 +295,49 @@
   }
   .hover-card-name { font-weight: 600; color: var(--text); }
   .hover-card-detail { color: var(--text-dim); font-size: 10px; }
+  /* --------------------------------------------------------- modal dialog */
+  .modal-backdrop {
+    position: fixed; inset: 0; z-index: 700;
+    background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .modal {
+    background: var(--bg-2); border: 1px solid var(--border-2); border-radius: 8px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.7);
+    width: min(720px, calc(100vw - 48px));
+    max-height: calc(100vh - 80px);
+    display: flex; flex-direction: column;   /* so only the body scrolls */
+  }
+  .modal-head {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    font-size: 14px; font-weight: 600;
+  }
+  .modal-body { padding: 12px 16px; overflow-y: auto; font-size: 12px; }
+  .modal-foot {
+    padding: 10px 16px; border-top: 1px solid var(--border);
+    display: flex; gap: 8px; justify-content: flex-end;
+  }
+  .modal-foot .primary { border-color: var(--accent); color: var(--accent); }
+  .modal table { border-collapse: collapse; width: 100%; margin-bottom: 4px; }
+  .modal th, .modal td {
+    text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+  }
+  .modal th:first-child, .modal td:first-child {
+    text-align: left; font-variant-numeric: normal;
+    max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .modal th { color: var(--text-dim); font-weight: 500; font-size: 11px; }
+  .modal tr.total td { border-bottom: none; font-weight: 600; }
+  .merge-note { color: var(--text-dim); margin: 0 0 12px; }
+  .merge-sub { color: var(--text-dim); font-size: 11px; margin: 14px 0 6px; }
+  .merge-warn { color: var(--warn); }
+  .merge-conflicts { margin: 0; padding: 0; list-style: none; }
+  .merge-conflicts li {
+    padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 11px;
+  }
+  .merge-conflicts .ck { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  .merge-conflicts .kept { color: var(--ok); }
   /* The room the viewer opens on, so the setting is visible rather than invisible. */
   .room.home rect, .room.home circle { stroke: #ff9b30; stroke-width: 2.5; }
   .floor-label { font-size: 14px; fill: var(--text-faint); font-weight: 600; }
@@ -477,7 +520,9 @@
       <button id="centerBtn" title="Reset zoom and pan (R)">⌖ Reset</button>
       <button id="toggleDetailsBtn" title="Toggle details panel">»</button>
       <button id="loadBtn" title="Load JSON file">📂 Load</button>
+      <button id="mergeBtn" title="Merge one or more map files into the map on screen">⊕ Merge</button>
       <input type="file" id="fileInput" accept="application/json" style="display:none">
+      <input type="file" id="mergeInput" accept="application/json" multiple style="display:none">
     </div>
   </header>
   <main>
@@ -689,6 +734,7 @@ const state = {
   transit: {},                  // { lineName: [[a,b], ...] }
   floorLabels: {},              // { z: label }
   fileName: '',
+  sourceNames: [],              // the file(s) behind the current map; >1 after a merge
   filters: {
     primaryTag: new Set(),
     exposureTier: new Set(),
@@ -746,6 +792,7 @@ const ARROW_DIRS = {
 // ============================================================== file loading
 const dropZone = document.getElementById('canvas');
 const fileInput = document.getElementById('fileInput');
+const mergeInput = document.getElementById('mergeInput');
 
 ['dragenter', 'dragover'].forEach((ev) =>
   dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.add('dragging-over'); }));
@@ -753,15 +800,24 @@ const fileInput = document.getElementById('fileInput');
   dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.remove('dragging-over'); }));
 
 dropZone.addEventListener('drop', (e) => {
-  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-  if (file) loadFile(file);
+  const files = (e.dataTransfer && e.dataTransfer.files) || [];
+  if (!files.length) return;
+  // One file replaces the map, as it always has. Dropping several can only
+  // sensibly mean "combine these", so it goes through the merge.
+  if (files.length === 1) loadFile(files[0]);
+  else mergeFiles(files);
 });
 fileInput.addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (file) loadFile(file);
   fileInput.value = '';
 });
+mergeInput.addEventListener('change', (e) => {
+  mergeFiles(e.target.files);
+  mergeInput.value = '';   // so picking the same file twice still fires change
+});
 document.getElementById('loadBtn').addEventListener('click', () => fileInput.click());
+document.getElementById('mergeBtn').addEventListener('click', () => mergeInput.click());
 
 async function loadFile(file) {
   try {
@@ -774,7 +830,8 @@ async function loadFile(file) {
 }
 
 // Detect bundle vs raw rooms format; tolerate both new and old exports.
-function ingest(data, name) {
+// Split out of ingest() so merging can read a file's contents without loading it.
+function bundleOf(data) {
   let rooms = {}, transit = {}, floorLabels = {};
   if (data && typeof data === 'object' && !Array.isArray(data)) {
     if (data.rooms && typeof data.rooms === 'object') {
@@ -787,13 +844,17 @@ function ingest(data, name) {
       const sample = Object.values(data)[0];
       if (sample && typeof sample === 'object' && ('exits' in sample || 'placement' in sample || 'key' in sample)) {
         rooms = data;
-        transit = {};
-        floorLabels = {};
       }
     }
   }
+  return { rooms, transit, floorLabels };
+}
+
+function ingest(data, name) {
+  const { rooms, transit, floorLabels } = bundleOf(data);
   state.raw = data;
   state.fileName = name || 'loaded';
+  state.sourceNames = [state.fileName];   // a merge replaces this with its inputs
   state.rooms = [];
   state.byId.clear();
   state.byKey.clear();
@@ -825,6 +886,337 @@ function ingest(data, name) {
   openAtHome();
   updateFileInfo();
   render();
+}
+
+// ================================================================== merging
+//
+// Two recordings of the same city — a second machine, a friend's export, a map
+// from before a wipe — are combined with the mapper's own import rule, so the
+// viewer and the mapper never disagree about what a merge means:
+//
+//   a visited record beats an unvisited one;
+//   between two visited records, the one seen more recently wins;
+//   ties go to the file named later.
+//
+// The result is an ordinary bundle fed straight to ingest(), so it is normalised,
+// indexed and drawn by exactly the same code as a file loaded from disk — and it
+// can be saved back out in a shape the mapper's own "Import map JSON…" accepts.
+//
+// Nothing is written to disk unless the user asks: the merge lives in the page
+// until they press Save, and the files they picked are never modified.
+
+const treatAsVisited = (r) => r && r.visited !== false;
+
+// The mapper's mergeRoom(), mirrored. Rooms are matched on their key — "x,y,z"
+// for a placed room, "sewer-200" and friends for one the server only gave an id.
+function pickRoom(existing, incoming) {
+  if (!existing) return incoming;
+  if (treatAsVisited(incoming) && !treatAsVisited(existing)) return incoming;
+  if (treatAsVisited(existing) && !treatAsVisited(incoming)) return existing;
+  return (incoming.lastSeen || 0) >= (existing.lastSeen || 0) ? incoming : existing;
+}
+
+// Same key, demonstrably different room. Worth saying out loud: the merge keeps
+// one of the two and the other is gone, which is exactly the case where a silent
+// merge would quietly lose a room the user had walked.
+function roomsDisagree(a, b) {
+  if (a.id != null && b.id != null && a.id !== b.id) return true;
+  if (a.name && b.name && a.name !== b.name) return true;
+  return false;
+}
+
+function mergeSources(sources) {
+  const rooms = Object.create(null);
+  const origin = Object.create(null);    // key -> name of the file that supplied it
+  const transitEdges = {};
+  const seenEdges = new Set();
+  const floorLabels = {};
+  const conflicts = [];
+  const stats = [];
+
+  for (const src of sources) {
+    const s = { name: src.name, rooms: 0, added: 0, updated: 0, kept: 0, edges: 0 };
+
+    for (const [key, room] of Object.entries(src.bundle.rooms)) {
+      if (!room || typeof room !== 'object') continue;
+      s.rooms++;
+      const existing = rooms[key];
+      if (!existing) {
+        rooms[key] = room;
+        origin[key] = src.name;
+        s.added++;
+        continue;
+      }
+      const winner = pickRoom(existing, room);
+      if (roomsDisagree(existing, room)) {
+        conflicts.push({
+          key,
+          a: { file: origin[key], name: existing.name || null, id: existing.id != null ? existing.id : null },
+          b: { file: src.name, name: room.name || null, id: room.id != null ? room.id : null },
+          keptFile: winner === room ? src.name : origin[key]
+        });
+      }
+      if (winner === room) {
+        rooms[key] = room;
+        origin[key] = src.name;
+        s.updated++;
+      } else {
+        s.kept++;
+      }
+    }
+
+    // Transit links are undirected, and the mapper dedupes them on the sorted
+    // pair — mirror that, or a merge doubles every line it has already seen.
+    for (const [line, edges] of Object.entries(src.bundle.transit || {})) {
+      if (!Array.isArray(edges)) continue;
+      for (const edge of edges) {
+        if (!Array.isArray(edge) || edge.length < 2) continue;
+        const [a, b] = edge;
+        if (!a || !b || a === b) continue;
+        const id = line + '\u0000' + [a, b].slice().sort().join('||');
+        if (seenEdges.has(id)) continue;
+        seenEdges.add(id);
+        if (!transitEdges[line]) transitEdges[line] = [];
+        transitEdges[line].push([a, b]);
+        s.edges++;
+      }
+    }
+
+    // Floor names are cosmetic, so the first file to name a floor keeps it
+    // rather than having later files churn the labels.
+    for (const [z, label] of Object.entries(src.bundle.floorLabels || {})) {
+      if (label && floorLabels[z] === undefined) floorLabels[z] = label;
+    }
+
+    stats.push(s);
+  }
+
+  const bundle = {
+    rooms,
+    transitEdges,
+    floorLabels,
+    mergedFrom: sources.map((s) => s.name),
+    exportedAt: new Date().toISOString()
+  };
+  const totals = {
+    rooms: Object.keys(rooms).length,
+    lines: Object.keys(transitEdges).length,
+    edges: seenEdges.size
+  };
+  return { bundle, report: { sources: stats, conflicts, totals } };
+}
+
+async function mergeFiles(fileList) {
+  const files = [...(fileList || [])];
+  if (!files.length) return;
+
+  const sources = [];
+  // Whatever is on screen is the first input, so Merge adds to the map you are
+  // looking at rather than replacing it.
+  if (state.rooms.length && state.raw) {
+    sources.push({ name: state.fileName || 'currently loaded', bundle: bundleOf(state.raw), onScreen: true });
+  }
+
+  const failed = [];
+  for (const f of files) {
+    try {
+      const bundle = bundleOf(JSON.parse(await f.text()));
+      if (!Object.keys(bundle.rooms).length) {
+        failed.push(f.name + ' — no rooms found in it');
+        continue;
+      }
+      sources.push({ name: f.name, bundle });
+    } catch (err) {
+      failed.push(f.name + ' — ' + err.message);
+    }
+  }
+
+  if (!sources.length) {
+    alert('Nothing could be merged:\n\n' + failed.join('\n'));
+    return;
+  }
+  if (sources.length === 1) {
+    const only = sources[0];
+    if (only.onScreen) {
+      // Every file failed; the map on screen is untouched, which is the right
+      // outcome — say so rather than silently re-ingesting it.
+      alert('Nothing was merged — none of the files could be read:\n\n' + failed.join('\n'));
+      return;
+    }
+    // One readable map and nothing to combine it with. Load it, and say why no
+    // merge happened rather than reporting a merge of a single file.
+    ingest(bundleToRaw(only.bundle), only.name);
+    alert('Only one readable map, so nothing was merged — it has been loaded instead.'
+      + (failed.length ? '\n\nSkipped:\n' + failed.join('\n') : '')
+      + '\n\nTo merge, load one map first and then pick the others, or select two or more files at once.');
+    return;
+  }
+
+  const { bundle, report } = mergeSources(sources);
+  ingest(bundle, `merged · ${sources.length} maps`);
+  state.sourceNames = sources.map((s) => s.name);
+  updateFileInfo();
+  showMergeReport(report, bundle, failed);
+}
+
+// bundleOf() splits a file into parts; this puts them back into the shape ingest()
+// and the mapper's own importer expect.
+function bundleToRaw(b) {
+  return { rooms: b.rooms, transitEdges: b.transit, floorLabels: b.floorLabels };
+}
+
+function dateStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate());
+}
+
+function downloadJSON(obj, filename) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ------------------------------------------------------------- merge report
+
+let modalEl = null;
+
+function closeModal() {
+  if (modalEl) { modalEl.remove(); modalEl = null; }
+}
+
+function openModal(title, buildBody, buttons) {
+  closeModal();
+  const back = document.createElement('div');
+  back.className = 'modal-backdrop';
+  const box = document.createElement('div');
+  box.className = 'modal';
+
+  const head = document.createElement('div');
+  head.className = 'modal-head';
+  head.textContent = title;
+
+  const body = document.createElement('div');
+  body.className = 'modal-body';
+  buildBody(body);
+
+  const foot = document.createElement('div');
+  foot.className = 'modal-foot';
+  for (const b of buttons) {
+    const btn = document.createElement('button');
+    btn.textContent = b.label;
+    if (b.primary) btn.className = 'primary';
+    btn.addEventListener('click', () => { if (b.onClick) b.onClick(); if (b.closes !== false) closeModal(); });
+    foot.appendChild(btn);
+  }
+
+  box.append(head, body, foot);
+  back.appendChild(box);
+  // Clicking the dimmed area dismisses, but a click inside must not bubble out
+  // to it and close the dialog the user is reading.
+  back.addEventListener('mousedown', (e) => { if (e.target === back) closeModal(); });
+  document.body.appendChild(back);
+  modalEl = back;
+  return box;
+}
+
+function showMergeReport(report, bundle, failed) {
+  openModal(`Merged ${report.sources.length} maps`, (body) => {
+    const note = document.createElement('p');
+    note.className = 'merge-note';
+    note.textContent = `Result: ${report.totals.rooms} rooms`
+      + (report.totals.edges ? `, ${report.totals.edges} transit links across ${report.totals.lines} lines` : '')
+      + '. Nothing has been written to disk — use Save merged map to keep it.';
+    body.appendChild(note);
+
+    const table = document.createElement('table');
+    const head = document.createElement('tr');
+    for (const h of ['Source', 'Rooms in file', 'New', 'Replaced existing', 'Ignored as older', 'Transit links']) {
+      const th = document.createElement('th');
+      th.textContent = h;
+      head.appendChild(th);
+    }
+    table.appendChild(head);
+    for (const s of report.sources) {
+      const tr = document.createElement('tr');
+      for (const v of [s.name, s.rooms, s.added, s.updated, s.kept, s.edges]) {
+        const td = document.createElement('td');
+        td.textContent = String(v);
+        tr.appendChild(td);
+      }
+      tr.firstChild.title = s.name;
+      table.appendChild(tr);
+    }
+    const totalRow = document.createElement('tr');
+    totalRow.className = 'total';
+    for (const v of ['Merged map', report.totals.rooms, '', '', '', report.totals.edges]) {
+      const td = document.createElement('td');
+      td.textContent = String(v);
+      totalRow.appendChild(td);
+    }
+    table.appendChild(totalRow);
+    body.appendChild(table);
+
+    if (failed && failed.length) {
+      const h = document.createElement('div');
+      h.className = 'merge-sub merge-warn';
+      h.textContent = `${failed.length} file(s) skipped`;
+      body.appendChild(h);
+      const ul = document.createElement('ul');
+      ul.className = 'merge-conflicts';
+      for (const f of failed) {
+        const li = document.createElement('li');
+        li.className = 'merge-warn';
+        li.textContent = f;
+        ul.appendChild(li);
+      }
+      body.appendChild(ul);
+    }
+
+    const h = document.createElement('div');
+    h.className = 'merge-sub' + (report.conflicts.length ? ' merge-warn' : '');
+    h.textContent = report.conflicts.length
+      ? `${report.conflicts.length} cell(s) where the maps describe different rooms — one of each pair was dropped`
+      : 'No cell was claimed by two different rooms.';
+    body.appendChild(h);
+
+    if (report.conflicts.length) {
+      const ul = document.createElement('ul');
+      ul.className = 'merge-conflicts';
+      const SHOWN = 60;
+      for (const c of report.conflicts.slice(0, SHOWN)) {
+        const li = document.createElement('li');
+        const k = document.createElement('span');
+        k.className = 'ck';
+        k.textContent = c.key + '  ';
+        const kept = document.createElement('span');
+        kept.className = 'kept';
+        kept.textContent = ' — kept ' + c.keptFile;
+        li.append(k, document.createTextNode(describeSide(c.a) + '  vs  ' + describeSide(c.b)), kept);
+        ul.appendChild(li);
+      }
+      body.appendChild(ul);
+      if (report.conflicts.length > SHOWN) {
+        const more = document.createElement('div');
+        more.className = 'merge-sub';
+        more.textContent = `…and ${report.conflicts.length - SHOWN} more.`;
+        body.appendChild(more);
+      }
+    }
+  }, [
+    { label: 'Save merged map…', primary: true, closes: false,
+      onClick: () => downloadJSON(bundle, `pbn-map_merged_${dateStamp()}.json`) },
+    { label: 'Close' }
+  ]);
+}
+
+function describeSide(side) {
+  return (side.name || '(unnamed)')
+    + (side.id != null ? ` #${side.id}` : '')
+    + ` (${side.file})`;
 }
 
 // Where a freshly loaded map should land. availableFloors is sorted high-to-low, so
@@ -1003,6 +1395,10 @@ function updateFileInfo() {
   const lines = Object.keys(state.transit).length;
   if (lines) parts.push(`${lines} transit line(s)`);
   el.textContent = parts.join(' · ');
+  // A merged map names only its count in the bar; the inputs go in the tooltip,
+  // where a long list of file names can't push the header around.
+  const names = state.sourceNames || [];
+  el.title = names.length > 1 ? 'Merged from:\n' + names.join('\n') : '';
 }
 
 // ============================================================== filters & sidebar
@@ -1663,7 +2059,7 @@ function attachHoverCard(gEl, r) {
 window.addEventListener('mousedown', (e) => {
   if (roomMenuEl && !roomMenuEl.contains(e.target)) hideRoomMenu();
 });
-window.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideRoomMenu(); });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { hideRoomMenu(); closeModal(); } });
 window.addEventListener('blur', hideRoomMenu);
 window.addEventListener('blur', hideHoverCard);
 
@@ -2233,6 +2629,8 @@ window.addEventListener('keydown', (e) => {
   // simply did nothing.
   const t = e.target;
   if (t && typeof t.matches === 'function' && t.matches('input, select, textarea')) return;
+  // A dialog is modal: the map must not walk about underneath it.
+  if (modalEl) return;
 
   // Resolve the direction: prefer e.code (which distinguishes numpad from
   // the main row), but fall back to a derived code from e.key so simulated
@@ -2370,7 +2768,7 @@ if (new URLSearchParams(location.search).get('sample') === '1') {
   overlay.className = 'empty-canvas';
   overlay.innerHTML = `
     <div class="big">Drop a PbN Mapper JSON here</div>
-    <div>…or click <b>Load</b> in the top bar.</div>
+    <div>…or click <b>Load</b> in the top bar. Drop several at once, or use <b>Merge</b>, to combine them.</div>
     <div style="font-size:11px;">Both the new exported bundle (<code>{rooms, transitEdges, floorLabels}</code>) and the raw localStorage shape are accepted.</div>
   `;
   document.getElementById('canvas').appendChild(overlay);
