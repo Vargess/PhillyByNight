@@ -2,7 +2,7 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.6.1
+// @version      3.7.0
 // @match        https://philadelphiabynight.net/play*
 // @downloadURL  https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
 // @updateURL    https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
@@ -19,7 +19,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
-  const SCRIPT_VERSION = '3.6.1';
+  const SCRIPT_VERSION = '3.7.0';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now
@@ -332,10 +332,18 @@
     }
   }
 
+  // Just the day, for files a human keeps and sorts: pbn-map_20261102.json. Local time,
+  // not UTC — the date wanted is the one the player was playing on.
+  function dateStamp(ms) {
+    const d = new Date(ms == null ? Date.now() : ms);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+  }
+
   function autosaveStamp(ms) {
     const d = new Date(ms);
     const p = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+    return `${dateStamp(ms)}-${p(d.getHours())}${p(d.getMinutes())}`;
   }
 
   function downloadJSON(obj, filename) {
@@ -1559,6 +1567,9 @@
     function setCollapsed(next) {
       if (next === state.collapsed) return;
       state.collapsed = next;
+      // Hiding the map leaves any open hover card with nothing to point at, and an
+      // auto-minimise happens without the cursor moving at all.
+      hideHoverCard();
       if (next) {
         expandedHeight = root.style.height;
         expandedWidth = root.style.width;
@@ -1781,6 +1792,95 @@
     return el;
   };
 
+  // ------------------------------------------------------------------ hover card
+  //
+  // The browser's own tooltip for an SVG <title> waits about a second and is drawn in
+  // the OS style, which reads poorly over a dark map in a small panel. This is the same
+  // text in the panel's styling, shown promptly, with the room name as a heading so a
+  // glancing hover answers "what is this?" without having to read the rest.
+  //
+  // It lives on document.body rather than inside the panel: the panel clips its own
+  // overflow, and a 340px box has nowhere to put a card for a room near its edge.
+  const HOVER_DELAY_MS = 120;
+  const hoverCard = { el: null, timer: 0, x: 0, y: 0 };
+
+  function ensureHoverCard() {
+    if (hoverCard.el) return hoverCard.el;
+    const el = document.createElement('div');
+    el.id = 'pbn-mapper-hover';
+    Object.assign(el.style, {
+      position: 'fixed', left: '0', top: '0', display: 'none',
+      maxWidth: '240px', padding: '5px 7px',
+      background: 'rgba(16,16,20,0.96)', border: '1px solid #6a6a75', borderRadius: '5px',
+      color: '#eee', font: '11px sans-serif', lineHeight: '1.35',
+      boxShadow: '0 3px 10px rgba(0,0,0,0.6)',
+      // Must not eat the events that keep it open, nor the right-click underneath it.
+      pointerEvents: 'none',
+      zIndex: 1000000   // one above the panel, which is the only thing it should cover
+    });
+    document.body.appendChild(el);
+    hoverCard.el = el;
+    return el;
+  }
+
+  function hoverCardVisible() {
+    return !!hoverCard.el && hoverCard.el.style.display !== 'none';
+  }
+
+  function showHoverCard(text, clientX, clientY) {
+    const el = ensureHoverCard();
+    el.textContent = '';
+    String(text).split('\n').forEach((line, i) => {
+      const row = document.createElement('div');
+      row.textContent = line;
+      if (i === 0) { row.style.fontWeight = 'bold'; row.style.color = '#fff'; }
+      else { row.style.color = '#b9b9c4'; row.style.fontSize = '10px'; }
+      el.appendChild(row);
+    });
+    el.style.display = 'block';
+    positionHoverCard(clientX, clientY);
+  }
+
+  function positionHoverCard(clientX, clientY) {
+    if (!hoverCardVisible()) return;
+    const el = hoverCard.el;
+    const gap = 12, margin = 4;
+    const box = el.getBoundingClientRect();
+    let x = clientX + gap, y = clientY + gap;
+    // Flip to the other side of the cursor rather than letting the card run off screen.
+    if (x + box.width > window.innerWidth - margin) x = clientX - gap - box.width;
+    if (y + box.height > window.innerHeight - margin) y = clientY - gap - box.height;
+    el.style.left = `${Math.max(margin, x)}px`;
+    el.style.top = `${Math.max(margin, y)}px`;
+  }
+
+  function hideHoverCard() {
+    if (hoverCard.timer) { clearTimeout(hoverCard.timer); hoverCard.timer = 0; }
+    if (hoverCard.el) hoverCard.el.style.display = 'none';
+  }
+
+  // The text is produced on demand, so a card shown later reflects the room as it is
+  // then rather than as it was when the shape was drawn.
+  function attachHover(el, textFn) {
+    el.addEventListener('mouseenter', (ev) => {
+      if (hoverCard.timer) clearTimeout(hoverCard.timer);
+      hoverCard.x = ev.clientX; hoverCard.y = ev.clientY;
+      // A short delay keeps the card from flickering as the cursor crosses rooms on
+      // its way somewhere else. It opens at wherever the cursor has got to by then,
+      // not at the point of entry, which may be a room away by now.
+      hoverCard.timer = setTimeout(() => {
+        hoverCard.timer = 0;
+        showHoverCard(textFn(), hoverCard.x, hoverCard.y);
+      }, HOVER_DELAY_MS);
+    });
+    el.addEventListener('mousemove', (ev) => {
+      hoverCard.x = ev.clientX; hoverCard.y = ev.clientY;
+      positionHoverCard(ev.clientX, ev.clientY);
+    });
+    el.addEventListener('mouseleave', hideHoverCard);
+    return el;
+  }
+
   // Where an exit leads, preferring the server's own target id over compass arithmetic.
   // Returns null when the exit is vertical or leads somewhere we cannot draw.
   function exitTarget(r, e) {
@@ -1794,6 +1894,9 @@
   }
 
   function renderSvg(g, labels) {
+    // The shapes are about to be thrown away, so no mouseleave will ever arrive for a
+    // room the cursor is sitting on. Close the card rather than leave it stranded.
+    hideHoverCard();
     while (g.firstChild) g.removeChild(g.firstChild);
     if (state.autoCenter) centerOnCurrent();
     applyTransform();
@@ -1910,7 +2013,7 @@
         shape.setAttribute('stroke-dasharray', '2,2');
       }
       if (r.positionUncertain) shape.setAttribute('stroke-dasharray', '2,2');
-      titled(shape, buildTooltip(r, labels));
+      attachHover(shape, () => buildTooltip(r, labels));
       shape.style.cursor = 'context-menu';
       shape.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
@@ -2058,6 +2161,7 @@
   function makePannable(svg, body) {
     let dragging = false, moved = false, sx = 0, sy = 0, startPanX = 0, startPanY = 0;
     svg.addEventListener('mousedown', (e) => {
+      hideHoverCard();              // a card pinned to the cursor while panning is noise
       if (e.button !== 0) return;   // left button only, so right-click-to-delete does not pan
       dragging = true; moved = false;
       sx = e.clientX; sy = e.clientY;
@@ -2078,6 +2182,7 @@
     window.addEventListener('mouseup', () => { dragging = false; svg.style.cursor = 'grab'; });
     body.addEventListener('wheel', (e) => {
       e.preventDefault();
+      hideHoverCard();              // the room under the cursor changes as the map zooms
       state.scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, state.scale * (e.deltaY < 0 ? 1.1 : 0.9)));
       applyTransform();
     }, { passive: false });
@@ -2087,7 +2192,8 @@
 
   function exportMap() {
     flushRooms();
-    downloadJSON(mapBundle(), 'pbn-map.json');
+    // Dated, so a folder of exports reads as a history rather than pbn-map (3).json.
+    downloadJSON(mapBundle(), `pbn-map_${dateStamp()}.json`);
   }
 
   function mergeRoom(existing, incoming) {

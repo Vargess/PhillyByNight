@@ -8,6 +8,37 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 3.7.0 — 2026-11-02
+
+### Added
+- **Exported maps carry the date they were saved**: `pbn-map_20261102.json` rather
+  than `pbn-map.json`. A folder of exports now reads as a history and sorts into
+  order, instead of relying on the browser's `pbn-map (3).json` numbering. Autosave
+  and activity-log file names are unchanged — they already carried a timestamp, and
+  now share the same date helper.
+- **A hover card naming the room under the cursor**, on both the mapper and the
+  viewer. The rooms already carried an SVG `<title>`, but the browser's tooltip for
+  one waits about a second and is drawn in the OS style, which sits badly over a dark
+  map in a small panel. The card shows after 120ms in the panel's own styling, with
+  the room name as a heading and the existing detail underneath. It follows the
+  cursor, flips to the other side rather than running off the screen edge, and closes
+  on leaving the room, panning, zooming, collapsing the panel or redrawing the map.
+
+### Changed
+- The mapper's hover card is attached to the page rather than the panel, so a room
+  near the panel's edge still gets a readable card instead of a clipped one.
+
+---
+
+## 2026-11-02 — map-viewer.html (7)
+
+### Added
+- **The same hover card as the mapper**, replacing the SVG `<title>` on each room:
+  name, key and id, key-feature state, and neighbourhood. Background-floor rooms stay
+  non-interactive, as before.
+
+---
+
 ## 2026-10-17 — map-viewer.html (6)
 
 ### Fixed

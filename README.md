@@ -114,14 +114,16 @@ first so the exits stay readable.
 | `_` | Collapse to just the header |
 
 Drag inside the map to pan, scroll to zoom, and right-click a room to delete it.
-Hover any room for its full details — tags, features, haven status, neighbourhood,
-coordinates, unexplored exits and where its stairs lead.
+Hover any room and a card appears beside the cursor with its name, then its full
+details — tags, features, haven status, neighbourhood, coordinates, unexplored exits
+and where its stairs lead. It follows the cursor and closes as soon as you leave the
+room, pan or zoom.
 
 ### The `⋯` menu
 
 | Item | What it does |
 | --- | --- |
-| Export map JSON | Save the whole map to a file |
+| Export map JSON | Save the whole map to a file, dated — `pbn-map_20261102.json` |
 | Import map JSON… | Merge a saved file into the current map |
 | Autosaves… | Browse the rolling backups; restore or save one to disk |
 | Discard estimated-position rooms | Throw away rooms whose position is only a guess, keeping everything confirmed |
@@ -132,7 +134,7 @@ coordinates, unexplored exits and where its stairs lead.
 | ☑ Record activity log | Whether to record activity at all |
 | ☑ Include chat text in the log | Off by default — see [Privacy](#privacy) |
 | Clear activity log | Discard the recorded log |
-| Check for updates | Ask GitHub whether a newer version exists |
+| Open the update page… | Show your running version and open Tampermonkey's install page |
 
 ---
 

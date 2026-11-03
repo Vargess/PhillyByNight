@@ -283,6 +283,18 @@
   .room-menu-item:hover { background: var(--bg-3, #2f2f38); }
   .room-menu-item.disabled { color: var(--text-faint); cursor: default; }
   .room-menu-item.disabled:hover { background: transparent; }
+  /* Follows the cursor over a room: the name promptly, the detail under it. SVG
+     <title> does the same job but waits about a second and is drawn by the OS,
+     which sits oddly on a dark map. Below .room-menu so a right-click wins. */
+  .hover-card {
+    position: fixed; z-index: 450; max-width: 260px;
+    background: rgba(16,16,20,0.96); border: 1px solid var(--border-2);
+    border-radius: 5px; padding: 5px 7px; font-size: 11px; line-height: 1.35;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.6);
+    pointer-events: none;   /* must never intercept the events keeping it open */
+  }
+  .hover-card-name { font-weight: 600; color: var(--text); }
+  .hover-card-detail { color: var(--text-dim); font-size: 10px; }
   /* The room the viewer opens on, so the setting is visible rather than invisible. */
   .room.home rect, .room.home circle { stroke: #ff9b30; stroke-width: 2.5; }
   .floor-label { font-size: 14px; fill: var(--text-faint); font-weight: 600; }
@@ -1579,14 +1591,87 @@ function showRoomMenu(clientX, clientY, r) {
   roomMenuEl = menu;
 }
 
+// ---------------------------------------------------------------- hover card
+//
+// A small card beside the cursor naming the room under it. This replaces the SVG
+// <title> the rooms used to carry: same information, but shown promptly and in the
+// viewer's own styling rather than after the OS tooltip delay.
+const HOVER_DELAY_MS = 120;
+let hoverCardEl = null;
+let hoverTimer = 0;
+let hoverX = 0, hoverY = 0;
+
+function hideHoverCard() {
+  if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = 0; }
+  if (hoverCardEl) { hoverCardEl.remove(); hoverCardEl = null; }
+}
+
+function hoverCardLines(r) {
+  const lines = [r.key + (r.id != null ? ' · id ' + r.id : '')];
+  const feat = featureLabel(r);
+  if (feat) lines.push(feat);
+  if (r.neighborhood && r.neighborhood.name) lines.push(r.neighborhood.name);
+  return lines;
+}
+
+function showHoverCard(r) {
+  hideHoverCard();
+  const card = document.createElement('div');
+  card.className = 'hover-card';
+  const name = document.createElement('div');
+  name.className = 'hover-card-name';
+  name.textContent = r.name || '(unnamed)';
+  card.appendChild(name);
+  for (const line of hoverCardLines(r)) {
+    const d = document.createElement('div');
+    d.className = 'hover-card-detail';
+    d.textContent = line;
+    card.appendChild(d);
+  }
+  document.body.appendChild(card);
+  hoverCardEl = card;
+  positionHoverCard(hoverX, hoverY);
+}
+
+function positionHoverCard(clientX, clientY) {
+  if (!hoverCardEl) return;
+  const gap = 12, margin = 4;
+  const box = hoverCardEl.getBoundingClientRect();
+  let x = clientX + gap, y = clientY + gap;
+  // Flip to the other side of the cursor rather than run off the window edge.
+  if (x + box.width > window.innerWidth - margin) x = clientX - gap - box.width;
+  if (y + box.height > window.innerHeight - margin) y = clientY - gap - box.height;
+  hoverCardEl.style.left = Math.max(margin, x) + 'px';
+  hoverCardEl.style.top = Math.max(margin, y) + 'px';
+}
+
+// A short delay stops the card flickering as the cursor crosses rooms on its way
+// somewhere else, and it opens wherever the cursor has got to by then.
+function attachHoverCard(gEl, r) {
+  gEl.addEventListener('mouseenter', (ev) => {
+    if (hoverTimer) clearTimeout(hoverTimer);
+    hoverX = ev.clientX; hoverY = ev.clientY;
+    hoverTimer = setTimeout(() => { hoverTimer = 0; showHoverCard(r); }, HOVER_DELAY_MS);
+  });
+  gEl.addEventListener('mousemove', (ev) => {
+    hoverX = ev.clientX; hoverY = ev.clientY;
+    positionHoverCard(ev.clientX, ev.clientY);
+  });
+  gEl.addEventListener('mouseleave', hideHoverCard);
+}
+
 window.addEventListener('mousedown', (e) => {
   if (roomMenuEl && !roomMenuEl.contains(e.target)) hideRoomMenu();
 });
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideRoomMenu(); });
 window.addEventListener('blur', hideRoomMenu);
+window.addEventListener('blur', hideHoverCard);
 
 function renderRooms() {
   const g = document.getElementById('roomsLayer');
+  // The shapes are about to go, so no mouseleave will arrive for the room the
+  // cursor is on. Close the card rather than leave it stranded on screen.
+  hideHoverCard();
   g.innerHTML = '';
   // 1. Background floors (drawn first so the current floor sits on top).
   for (const layer of BG_LAYERS) {
@@ -1627,11 +1712,7 @@ function renderRooms() {
       'data-key': r.key
     });
     gEl.appendChild(roomShape(r, isCurrent));
-    // Show label on hover via title; SVG <title> is the standard way.
-    const title = svgEl('title');
-    title.textContent = `${r.name || '(unnamed)'} — ${r.key}`
-      + `${r.id != null ? ' (id ' + r.id + ')' : ''}\n${featureLabel(r)}`;
-    gEl.appendChild(title);
+    attachHoverCard(gEl, r);
     for (const extra of roomAdornments(r)) gEl.appendChild(extra);
     // A small triangle on top of the current room — like a MUD client cursor.
     // Counter-flip so it still points down at the room after the wrapper flips y.
@@ -2071,6 +2152,7 @@ function installPanZoom() {
   let startX = 0, startY = 0, startTx = 0, startTy = 0;
 
   svg.addEventListener('mousedown', (e) => {
+    hideHoverCard();                              // not wanted while panning or clicking
     if (e.target.closest('.room')) return;        // let room clicks fire
     isPanning = true;
     startX = e.clientX; startY = e.clientY;
@@ -2088,6 +2170,7 @@ function installPanZoom() {
 
   svg.addEventListener('wheel', (e) => {
     e.preventDefault();
+    hideHoverCard();                              // the room under the cursor is moving
     const rect = svg.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
