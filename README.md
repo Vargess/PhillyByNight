@@ -109,7 +109,7 @@ first so the exits stay readable.
 | `Explore` | Search every exit direction in this room, then inspect |
 | `⌖` | Recentre on the room you're standing in, at 1× zoom |
 | `⛶` | Zoom out until the whole of the current floor fits |
-| `↗` | Dock to the top-right corner at the default size |
+| `↗` | Dock to the top-right at the default size — see [On a phone or tablet](#on-a-phone-or-tablet) |
 | `⋯` | Everything else (see below) |
 | `_` | Collapse to just the header |
 
@@ -129,6 +129,7 @@ room, pan or zoom.
 | Discard estimated-position rooms | Throw away rooms whose position is only a guess, keeping everything confirmed |
 | Clear saved map | Wipe everything (recoverable from an autosave) |
 | ☑ Minimise while a game window is open | Collapse the panel whenever `/char`, `/inv`, `/mail` etc. are open |
+| Dock inside the game text pane | `auto` / `always` / `never` — where `↗` puts the panel |
 | ☑ Explore each new room automatically | Run the Explore sweep every time you arrive somewhere |
 | Log to file | Export the activity log for diagnosing a problem |
 | ☑ Record activity log | Whether to record activity at all |
@@ -191,6 +192,37 @@ mid-sweep abandons the rest rather than firing searches into the room you've jus
 reached.
 
 A full sweep takes about 16 seconds.
+
+---
+
+## On a phone or tablet
+
+The game reflows on a small screen: the sidebar drops below the input field as you
+scroll, which puts its close button right where a panel docked to the corner of the
+window lands. So on a touch device `↗` docks to the top-right **of the game's
+scrolling message pane** instead, clearing the menu bar above it. On a desktop it
+docks to the window corner exactly as before.
+
+The panel is also shrunk to fit if the message pane is smaller than its default
+340×340, and if the pane can't be found, or only a sliver of it is on screen, the
+dock falls back to the window corner rather than putting the panel somewhere you
+can't reach.
+
+Detection is by feature, not user agent — **iPadOS Safari reports itself as a
+Macintosh**, so looking for `iPad` in the user agent finds nothing on the device this
+is for. What's actually tested is a coarse pointer or a real multi-touch digitiser,
+*and* a screen whose short edge is 1024px or less; both have to agree, which keeps a
+touchscreen desktop monitor and a narrow desktop window out of it. It's re-checked
+on every dock, so rotating the tablet is picked up without a reload.
+
+If that guesses wrong on your device, **`⋯` → Dock inside the game text pane**
+cycles `auto` → `always` → `never`. In `auto` the menu line says what it decided
+("auto (on — mobile layout)"), and every dock is recorded in the activity log with
+the geometry it chose, so **Log to file** will show why it went where it did.
+
+One caveat: the panel is dragged and resized with mouse events, which iOS does not
+synthesise for a drag gesture — so on an iPad `↗` is likely the only way to move the
+panel, not just a shortcut.
 
 ---
 

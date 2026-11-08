@@ -2,7 +2,7 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.7.0
+// @version      3.8.0
 // @match        https://philadelphiabynight.net/play*
 // @downloadURL  https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
 // @updateURL    https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
@@ -19,7 +19,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
-  const SCRIPT_VERSION = '3.7.0';
+  const SCRIPT_VERSION = '3.8.0';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now
@@ -226,7 +226,7 @@
   const saveTransit = () => localStorage.setItem(TRANSIT_KEY, JSON.stringify(transitEdges));
   const saveView = () => localStorage.setItem(VIEW_KEY, JSON.stringify({
     floor: state.floor, autoMinimize: state.autoMinimize, autoExplore: state.autoExplore,
-    logEnabled: logEnabled, logChatText: logChatText
+    dockMode: state.dockMode, logEnabled: logEnabled, logChatText: logChatText
   }));
 
   function readJSON(key, fallback) {
@@ -1151,7 +1151,8 @@
   const state = Object.assign(
     {
       floor: null, scale: 1, panX: 0, panY: 0, collapsed: false,
-      autoCenter: true, autoFloor: true, autoMinimize: true, autoExplore: false
+      autoCenter: true, autoFloor: true, autoMinimize: true, autoExplore: false,
+      dockMode: 'auto'
     },
     readJSON(VIEW_KEY, {})
   );
@@ -1234,6 +1235,71 @@
       attributes: true, attributeFilter: ['style', 'class', 'hidden', 'aria-hidden', 'open']
     });
     scheduleWindowCheck();
+  }
+
+  // ----------------------------------------------------- mobile dock target
+  //
+  // On a phone or tablet the game reflows: the sidebar drops below the input field
+  // as you scroll, and the menu's close button ends up where a panel docked to the
+  // viewport's top-right corner lands on top of it. Docking inside the scrolling
+  // message pane instead puts the map over the game's own text, which scrolls, and
+  // leaves every control reachable.
+  //
+  // iPadOS is the reason this is feature-tested rather than sniffed from the user
+  // agent: since iPadOS 13 Safari reports itself as a Macintosh by default, so
+  // /iPad/.test(navigator.userAgent) is false on the very device this is for.
+  // A coarse pointer or a real multi-touch digitiser, on a screen whose short edge
+  // is tablet-sized, is the honest test. Re-evaluated per dock, so rotating the
+  // device or resizing the window is picked up without a reload.
+  const MOBILE_SHORT_EDGE = 1024;   // iPad Pro: 1024 portrait width, 1024 landscape height
+
+  function isMobileLayout() {
+    const coarse = typeof window.matchMedia === 'function'
+      && window.matchMedia('(pointer: coarse)').matches;
+    const multiTouch = (navigator.maxTouchPoints || 0) > 1;
+    const shortEdge = Math.min(window.innerWidth, window.innerHeight);
+    // The width test keeps a touchscreen desktop monitor out of it; the pointer and
+    // touch tests keep a small desktop window out of it. Both have to agree.
+    return (coarse || multiTouch) && shortEdge <= MOBILE_SHORT_EDGE;
+  }
+
+  // The game's scrolling output pane, found by shape rather than by class name.
+  // Quasar generates its markup and the game's own classes are not ours to rely on,
+  // but "the largest thing on the page that actually scrolls vertically" has been the
+  // message log in every layout it has had. Returns null when nothing qualifies, and
+  // the caller falls back to the viewport corner.
+  // The on-screen part of an element's box, or null when none of it is showing.
+  // Docking targets the visible part only: a pane wider than the viewport, or one
+  // scrolled half out of it, would otherwise put the panel somewhere unreachable —
+  // clampPanelToViewport would rescue a 60px sliver of it, which is the right
+  // contract for a dragged panel and the wrong one for a docked one.
+  function visibleRect(el) {
+    const r = el.getBoundingClientRect();
+    const left = Math.max(r.left, 0);
+    const top = Math.max(r.top, 0);
+    const right = Math.min(r.right, window.innerWidth);
+    const bottom = Math.min(r.bottom, window.innerHeight);
+    if (right <= left || bottom <= top) return null;
+    return { left, top, right, bottom, width: right - left, height: bottom - top };
+  }
+
+  function findOutputPane() {
+    if (!document.body) return null;
+    let best = null, bestArea = 0;
+    for (const el of document.body.querySelectorAll('div, main, section, article')) {
+      if (el.closest('#pbn-mapper')) continue;                  // our own panel scrolls too
+      if (el.closest(POPUP_SELECTORS.join(','))) continue;      // a dialog is not the log
+      if (el.scrollHeight <= el.clientHeight + 8) continue;     // not actually scrolling
+      const r = el.getBoundingClientRect();
+      if (r.width < 200 || r.height < 120) continue;
+      if (r.bottom <= 0 || r.top >= window.innerHeight) continue;   // scrolled off screen
+      const cs = getComputedStyle(el);
+      if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+      if (cs.overflowY !== 'auto' && cs.overflowY !== 'scroll') continue;
+      const area = r.width * r.height;
+      if (area > bestArea) { bestArea = area; best = el; }
+    }
+    return best;
   }
 
   function injectUI() {
@@ -1329,19 +1395,51 @@
     }
     exploreListeners.push(syncExploreBtn);
 
-    const dockBtn = btn('↗', 'Dock to the top-right corner at the default size');
+    const dockBtn = btn('↗', 'Dock to the top-right at the default size — inside the game\'s text pane on mobile');
     dockBtn.addEventListener('click', () => dockTopRight());
+
+    // 'auto' follows isMobileLayout(); the other two are there for when it guesses
+    // wrong on a device I cannot test, so nobody is stuck with the wrong corner.
+    const dockUsesPane = () => (state.dockMode === 'always') ||
+      (state.dockMode !== 'never' && isMobileLayout());
 
     function dockTopRight() {
       menu.style.display = 'none';
       autoCollapsed = false;
       setCollapsed(false);
-      root.style.width = `${initW}px`;
-      root.style.height = `${initH}px`;
-      root.style.left = `${Math.max(margin, window.innerWidth - initW - margin)}px`;
-      root.style.top = `${margin}px`;
+
+      // Desktop docks to the viewport's top-right, as it always has. On mobile the
+      // target is the top-right of the game's own scrolling text instead — see
+      // findOutputPane() for why the viewport corner is the wrong place there.
+      const pane = dockUsesPane() ? findOutputPane() : null;
+      const area = pane ? visibleRect(pane) : null;
+      // Too small a target is worse than the corner: fall back rather than wedge the
+      // panel into a strip of pane that happens to be showing.
+      const usePane = !!area && area.width >= 240 && area.height >= 160;
+
+      // A panel wider than the pane it is docking into would hang off the side, so
+      // the docked size is capped to fit. Desktop is unaffected: initW/initH are
+      // smaller than any pane worth docking into.
+      const w = usePane ? Math.min(initW, Math.floor(area.width) - margin * 2) : initW;
+      const h = usePane ? Math.min(initH, Math.floor(area.height) - margin * 2) : initH;
+      root.style.width = `${Math.max(220, w)}px`;
+      root.style.height = `${Math.max(160, h)}px`;
+
+      const left = usePane ? area.right - w - margin : window.innerWidth - initW - margin;
+      const top = usePane ? area.top + margin : margin;
+      root.style.left = `${Math.max(margin, left)}px`;
+      root.style.top = `${Math.max(margin, top)}px`;
       root.style.right = 'auto';
       root.style.bottom = 'auto';
+      clampPanelToViewport(root);   // a pane partly off screen must not take the panel with it
+
+      logEvent('ui', 'docked ' + (usePane ? 'into the game text pane' : 'to the viewport corner'), {
+        mode: state.dockMode || 'auto',
+        mobile: isMobileLayout(),
+        paneFound: !!pane,
+        at: [Math.round(left), Math.round(top), Math.round(w), Math.round(h)]
+      });
+
       state.scale = 1;
       state.autoCenter = true;
       state.autoFloor = true;
@@ -1414,6 +1512,15 @@
       else if (state.autoMinimize) scheduleWindowCheck();
     });
 
+    const DOCK_MODES = ['auto', 'always', 'never'];
+    const dockModeItem = menuItem('', () => {
+      const next = DOCK_MODES[(DOCK_MODES.indexOf(state.dockMode || 'auto') + 1) % DOCK_MODES.length];
+      state.dockMode = next;
+      saveView();
+      syncToggleLabels();
+      logEvent('ui', 'dock target mode set to ' + next, { mobile: isMobileLayout() });
+    });
+
     const autoExploreItem = menuItem('', () => {
       state.autoExplore = !state.autoExplore;
       saveView();
@@ -1454,6 +1561,12 @@
     function syncToggleLabels() {
       const mark = (on) => (on ? '✓ ' : ' ');
       autoMinItem.textContent = mark(state.autoMinimize) + 'Minimise while a game window is open';
+      const mode = state.dockMode || 'auto';
+      // Spelling out what auto has decided, so the menu answers "why did it dock
+      // there?" without the user having to work out what the script thinks it is on.
+      dockModeItem.textContent = '  Dock inside the game text pane: ' + (mode === 'auto'
+        ? `auto (${isMobileLayout() ? 'on — mobile layout' : 'off — desktop'})`
+        : mode);
       autoExploreItem.textContent = mark(state.autoExplore) + 'Explore each new room automatically';
       logItem.textContent = mark(logEnabled) + 'Record activity log';
       chatItem.textContent = mark(logChatText) + 'Include chat text in the log';
@@ -1462,6 +1575,9 @@
 
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      // What "auto" resolves to changes when the device is rotated, so the label is
+      // refreshed on open rather than left as it was when the menu was built.
+      syncToggleLabels();
       menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
     });
     window.addEventListener('mousedown', (e) => {

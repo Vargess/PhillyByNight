@@ -8,6 +8,34 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 3.8.0 — 2026-11-08
+
+### Added
+- **The dock button knows about mobile layouts.** On a phone or tablet the game
+  slides its sidebar below the input field as you scroll, so a panel docked to the
+  top-right of the *window* sits on top of the menu's close button. `↗` now docks to
+  the top-right of the game's own scrolling message pane there, below the menu bar.
+  Desktop docking is unchanged — same corner, same size, same pixel.
+  - Detection is by feature rather than user agent, because **iPadOS Safari reports
+    itself as a Macintosh**: `/iPad/.test(navigator.userAgent)` is false on the exact
+    device this is for. The test is a coarse pointer *or* `maxTouchPoints > 1`,
+    **and** a screen whose short edge is ≤ 1024px — both halves required, which
+    excludes a touchscreen desktop monitor and a narrow desktop window. Evaluated per
+    dock, so rotating a tablet needs no reload.
+  - The pane is found by shape — the largest element on the page that genuinely
+    scrolls vertically, excluding our own panel and any dialog — rather than by a
+    class name the game is free to change.
+  - The docked panel is capped to fit inside the pane, and only the *on-screen* part
+    of the pane counts as a target. A pane wider than the viewport, or scrolled
+    half out of it, falls back to the window corner instead of docking the panel
+    somewhere unreachable.
+  - **`⋯` → Dock inside the game text pane** cycles `auto` / `always` / `never` for
+    when the detection is wrong on a device I can't test. In `auto` the menu line
+    reports what it decided, and every dock is written to the activity log with the
+    mode, the detection result and the chosen geometry.
+
+---
+
 ## 2026-11-03 — map-viewer.html (8)
 
 ### Added
