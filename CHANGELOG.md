@@ -8,6 +8,34 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 3.8.1 — 2026-11-08
+
+### Fixed
+- **Docking on mobile still covered the close controls.** 3.8.0 assumed the message
+  pane's top-right corner was free; on the real layout it isn't. Two causes, both
+  fixed:
+  - **The wrong element was being chosen.** On mobile the page scrolls *as well as*
+    the message pane — the room image and tag displays sit below the input bar, so
+    the whole page needs scrolling to reach them. That makes the outer wrapper a
+    scroll candidate too, and because it is the larger of the two, "largest
+    scroller wins" picked the wrapper, whose top-right corner is exactly where the
+    controls are. Candidates that *contain* another candidate are now dropped, so
+    the innermost scroller — the message log — wins.
+  - **The chosen corner is no longer assumed to be free.** Having picked a corner,
+    the dock now samples what is actually painted under the panel's title bar with
+    `elementsFromPoint` and steps down past any control sitting there. This works
+    whatever the obstruction is — a menu bar, a floating close button, something the
+    game adds later — and whether or not the pane search got the right element. It
+    stops rather than descending past a third of the screen, and only control-sized
+    elements count, so the panel is never pushed below a page-sized container.
+- The docked height now accounts for having stepped down, instead of running off
+  the bottom of the screen by however far the panel moved.
+- Every dock logs the pointer type, touch points, viewport, which element was
+  chosen, and how far it stepped — so a bad dock can be diagnosed from **Log to
+  file** rather than guessed at.
+
+---
+
 ## 3.8.0 — 2026-11-08
 
 ### Added

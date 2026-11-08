@@ -2,7 +2,7 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.8.0
+// @version      3.8.1
 // @match        https://philadelphiabynight.net/play*
 // @downloadURL  https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
 // @updateURL    https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
@@ -19,7 +19,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
-  const SCRIPT_VERSION = '3.8.0';
+  const SCRIPT_VERSION = '3.8.1';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now
@@ -1283,9 +1283,67 @@
     return { left, top, right, bottom, width: right - left, height: bottom - top };
   }
 
+  // What a docked panel would actually land on top of.
+  //
+  // Picking a container and trusting its corner to be free turned out not to be
+  // enough: the mobile layout puts the close controls over the top-right of the
+  // message area, so docking to the pane's corner still buried them. Sampling the
+  // painted page answers the question directly, and keeps answering it whether the
+  // obstruction is a menu bar, a floating close button, or something the game grows
+  // later — none of which this script gets to know about in advance.
+  //
+  // Only the band the panel's own header would cover is sampled. A control further
+  // down is under the map rather than under the title bar, and stepping past
+  // everything on the page would walk the panel off the bottom of the screen.
+  const DOCK_SAMPLE_BAND = 48;
+  const CONTROL_SELECTOR = 'button, a, [role="button"], input, select, label, .q-btn, [class*="close" i]';
+
+  function controlsUnder(left, top, width) {
+    const hits = [];
+    const seen = new Set();
+    const xs = [left + 8, left + width / 2, left + width - 8];
+    const ys = [top + 4, top + DOCK_SAMPLE_BAND / 2, top + DOCK_SAMPLE_BAND];
+    for (const x of xs) {
+      for (const y of ys) {
+        if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) continue;
+        for (const el of document.elementsFromPoint(x, y)) {
+          if (!(el instanceof Element) || seen.has(el)) continue;
+          seen.add(el);
+          const ctl = el.closest(CONTROL_SELECTOR);
+          if (!ctl || ctl.closest('#pbn-mapper')) continue;   // our own buttons don't count
+          const r = ctl.getBoundingClientRect();
+          // A control, not the bar it sits in. Anything page-sized is not what we are
+          // dodging, and stepping below it would push the map off the screen.
+          if (r.height < 8 || r.height > 80 || r.width > 260) continue;
+          hits.push(r);
+        }
+      }
+    }
+    return hits;
+  }
+
+  // Step the panel down until its header is clear of whatever controls are there.
+  // Gives up rather than dropping the panel past a third of the screen: at that
+  // point the layout is not what this was written for, and the corner it already
+  // has is a better answer than somewhere arbitrary halfway down the page.
+  function dodgeControls(left, top, width) {
+    const limit = Math.max(top, window.innerHeight * 0.34);
+    let y = top;
+    for (let pass = 0; pass < 4; pass++) {
+      const hits = controlsUnder(left, y, width);
+      if (!hits.length) break;
+      const lowest = Math.max(...hits.map((r) => r.bottom));
+      if (lowest <= y) break;
+      const next = lowest + 8;
+      if (next > limit) return { top: y, gaveUp: true, passes: pass };
+      y = next;
+    }
+    return { top: y, gaveUp: false };
+  }
+
   function findOutputPane() {
     if (!document.body) return null;
-    let best = null, bestArea = 0;
+    const candidates = [];
     for (const el of document.body.querySelectorAll('div, main, section, article')) {
       if (el.closest('#pbn-mapper')) continue;                  // our own panel scrolls too
       if (el.closest(POPUP_SELECTORS.join(','))) continue;      // a dialog is not the log
@@ -1296,10 +1354,18 @@
       const cs = getComputedStyle(el);
       if (cs.visibility === 'hidden' || cs.display === 'none') continue;
       if (cs.overflowY !== 'auto' && cs.overflowY !== 'scroll') continue;
-      const area = r.width * r.height;
-      if (area > bestArea) { bestArea = area; best = el; }
+      candidates.push({ el, area: r.width * r.height });
     }
-    return best;
+    if (!candidates.length) return null;
+    // On mobile the page scrolls as well as the message pane, so more than one
+    // thing here qualifies — and a wrapper that *contains* the log is not the log.
+    // Drop any candidate holding another, which leaves the innermost scrollers, and
+    // take the largest of those. Picking the largest outright chose the wrapper, and
+    // its top-right corner is exactly where the controls we are trying to avoid live.
+    const innermost = candidates.filter((c) =>
+      !candidates.some((o) => o !== c && c.el.contains(o.el)));
+    const pool = innermost.length ? innermost : candidates;
+    return pool.reduce((best, c) => (c.area > best.area ? c : best), pool[0]).el;
   }
 
   function injectUI() {
@@ -1421,14 +1487,28 @@
       // the docked size is capped to fit. Desktop is unaffected: initW/initH are
       // smaller than any pane worth docking into.
       const w = usePane ? Math.min(initW, Math.floor(area.width) - margin * 2) : initW;
-      const h = usePane ? Math.min(initH, Math.floor(area.height) - margin * 2) : initH;
-      root.style.width = `${Math.max(220, w)}px`;
-      root.style.height = `${Math.max(160, h)}px`;
+      const left = Math.max(margin, usePane ? area.right - w - margin : window.innerWidth - initW - margin);
+      let top = Math.max(margin, usePane ? area.top + margin : margin);
 
-      const left = usePane ? area.right - w - margin : window.innerWidth - initW - margin;
-      const top = usePane ? area.top + margin : margin;
-      root.style.left = `${Math.max(margin, left)}px`;
-      root.style.top = `${Math.max(margin, top)}px`;
+      // Whichever corner was chosen, step past anything clickable actually sitting
+      // there. This is what makes the dock work on a layout the pane search gets
+      // wrong — including one where the page itself scrolls and there is no inner
+      // pane to find, so the corner above is just the top of the window.
+      let dodge = null;
+      if (dockUsesPane()) {
+        dodge = dodgeControls(left, top, w);
+        top = dodge.top;
+      }
+
+      // Height is settled last: dropping past a menu bar eats into what is left.
+      const roomBelow = window.innerHeight - top - margin;
+      const paneLimit = usePane ? area.bottom - top - margin : roomBelow;
+      const h = Math.max(160, Math.min(initH, roomBelow, paneLimit));
+
+      root.style.width = `${Math.max(220, w)}px`;
+      root.style.height = `${h}px`;
+      root.style.left = `${left}px`;
+      root.style.top = `${top}px`;
       root.style.right = 'auto';
       root.style.bottom = 'auto';
       clampPanelToViewport(root);   // a pane partly off screen must not take the panel with it
@@ -1436,7 +1516,15 @@
       logEvent('ui', 'docked ' + (usePane ? 'into the game text pane' : 'to the viewport corner'), {
         mode: state.dockMode || 'auto',
         mobile: isMobileLayout(),
+        coarsePointer: typeof window.matchMedia === 'function'
+          && window.matchMedia('(pointer: coarse)').matches,
+        maxTouchPoints: navigator.maxTouchPoints || 0,
+        viewport: [window.innerWidth, window.innerHeight],
         paneFound: !!pane,
+        paneTag: pane ? pane.tagName + '.' + String(pane.className || '').slice(0, 60) : null,
+        dodgedTo: dodge && dodge.top !== (usePane ? Math.max(margin, area.top + margin) : margin)
+          ? Math.round(dodge.top) : null,
+        dodgeGaveUp: dodge ? !!dodge.gaveUp : null,
         at: [Math.round(left), Math.round(top), Math.round(w), Math.round(h)]
       });
 

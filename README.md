@@ -203,10 +203,18 @@ window lands. So on a touch device `↗` docks to the top-right **of the game's
 scrolling message pane** instead, clearing the menu bar above it. On a desktop it
 docks to the window corner exactly as before.
 
-The panel is also shrunk to fit if the message pane is smaller than its default
-340×340, and if the pane can't be found, or only a sliver of it is on screen, the
-dock falls back to the window corner rather than putting the panel somewhere you
-can't reach.
+The pane is found by shape rather than class name: the element that genuinely
+scrolls vertically, preferring the innermost one. That matters because on mobile the
+page scrolls *as well as* the message pane — the room image and tag displays sit
+below the input bar — so more than one thing qualifies, and the outer wrapper is the
+larger of them.
+
+Having picked a corner, the dock then checks what is actually painted there and
+steps down past any control in the way, so it clears the close buttons whether they
+sit in a menu bar or float over the message text. The panel is shrunk to fit the
+pane, and if the pane can't be found, or only a sliver of it is on screen, the dock
+falls back to the window corner rather than putting the panel somewhere you can't
+reach.
 
 Detection is by feature, not user agent — **iPadOS Safari reports itself as a
 Macintosh**, so looking for `iPad` in the user agent finds nothing on the device this
