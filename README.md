@@ -124,6 +124,7 @@ room, pan or zoom.
 | Item | What it does |
 | --- | --- |
 | Export map JSON | Save the whole map to a file, dated — `pbn-map_20261102.json` |
+| Export for MUSH Map (sharing)… | Convert the map to the public MUSH Map site's format — see [Sharing](#sharing-to-mush-map) |
 | Import map JSON… | Merge a saved file into the current map |
 | Autosaves… | Browse the rolling backups; restore or save one to disk |
 | Discard estimated-position rooms | Throw away rooms whose position is only a guess, keeping everything confirmed |
@@ -231,6 +232,42 @@ the geometry it chose, so **Log to file** will show why it went where it did.
 One caveat: the panel is dragged and resized with mouse events, which iOS does not
 synthesise for a drag gesture — so on an iPad `↗` is likely the only way to move the
 panel, not just a shortcut.
+
+---
+
+## Sharing to MUSH Map
+
+There is a public MUSH Map site for the game that otherwise wants every room typed
+in by hand. **`⋯` → Export for MUSH Map (sharing)…** converts the whole map into its
+JSON format and writes `mush-map_YYYYMMDD.json`, ready to upload. It shows you what
+will and won't make the trip and waits for you to confirm before writing anything.
+
+It is a one-way, lossy conversion — their format is simpler than ours:
+
+| What | What happens |
+| --- | --- |
+| Rooms, names, positions, layers | Carried over exactly, relative geometry preserved |
+| Exits | Carried over wherever they have a compass bearing |
+| Tags, exposure, features, haven status, neighbourhood | Written into each room's **description**, the only field they survive in |
+| Room colour | Mapped onto their palette, with their colour legend filled in to match |
+| Transit lines | **Dropped** — their `transitLines` was empty in the sample, so its shape is unknown |
+| Sewer "passage 1" exits | **Dropped** — they carry no compass bearing to translate |
+| Vehicles, unplaced rooms | **Dropped** — their grid needs a real cell |
+
+On a 634-room map that comes to 631 rooms and 1,133 exits out, with 173 bearingless
+passages and 36 exits to rooms that aren't in the map left behind.
+
+Room ids are derived from the room's own key rather than from the clock, so
+exporting the same map twice produces identical files — re-uploading an updated map
+lines the rooms up with the previous version instead of arriving as a fresh set.
+
+Two details were read off their sample rather than documented anywhere: **their y
+axis grows downward** where ours grows north (so the map is flipped on export), and
+their coordinates are positive (so it is shifted into positive space). Both were
+verified against their own file. Their sample never used a negative layer either;
+ours keeps street level at `0` and puts the sewers at `-1`/`-2`. If their site turns
+out to refuse negative layers, `MUSH_Z_OFFSET` near the top of the export section
+shifts everything up — set it to `2`.
 
 ---
 

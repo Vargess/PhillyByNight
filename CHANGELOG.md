@@ -8,6 +8,38 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 3.9.0 — 2026-11-09
+
+### Added
+- **Export for MUSH Map (sharing)…** in the `⋯` menu, converting the map into the
+  format the public MUSH Map site uses so it can be uploaded instead of typed in
+  room by room. Writes `mush-map_YYYYMMDD.json` after showing exactly what will and
+  will not survive, and waits for confirmation before writing.
+  - Rooms, names, positions and layers carry over with relative geometry intact;
+    exits carry over wherever they have a compass bearing.
+  - Their rooms have one free-text `description`, so our tags, exposure tier,
+    features, haven status and neighbourhood are written into it rather than lost.
+    Room colour is mapped onto their palette and their `tagLabels` legend is filled
+    in to match, so a shared map reads the way ours does.
+  - Room ids are derived from the room key, not the clock, so the same map exports
+    byte-identically every time and a re-upload lines up with the previous one.
+  - Dropped, and reported in the confirmation: transit lines (their `transitLines`
+    was empty in the sample, so its shape is unknown), sewer "passage N" exits
+    (no bearing to translate), vehicles and unplaced rooms (their grid needs a
+    real cell). On the author's 634-room map: 631 rooms and 1,133 exits out, 173
+    bearingless passages and 36 dangling exits left behind.
+
+### Notes
+- Their format was inferred from a single 7-room export, so two conventions were
+  read off the sample and then checked back against it: **their y axis grows
+  downward** where ours grows north (the map is flipped on export), and their
+  coordinates are positive (it is shifted into positive space). The same geometry
+  assertion passes on all 1,133 exported exits and on all 8 of theirs.
+- Their sample never used a negative layer. Street level stays at `0` and sewers at
+  `-1`/`-2`; `MUSH_Z_OFFSET` shifts everything up if their site refuses negatives.
+
+---
+
 ## 3.8.1 — 2026-11-08
 
 ### Fixed

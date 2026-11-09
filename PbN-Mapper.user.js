@@ -2,7 +2,7 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.8.1
+// @version      3.9.0
 // @match        https://philadelphiabynight.net/play*
 // @downloadURL  https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
 // @updateURL    https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
@@ -19,7 +19,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
-  const SCRIPT_VERSION = '3.8.1';
+  const SCRIPT_VERSION = '3.9.0';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now
@@ -1588,6 +1588,7 @@
       return it;
     };
     menuItem('Export map JSON', exportMap);
+    menuItem('Export for MUSH Map (sharing)…', exportMushMap);
     menuItem('Import map JSON…', () => importInput.click());
     menuItem('Autosaves…', () => openAutosavePanel());
     menuItem('Discard estimated-position rooms', clearEstimated);
@@ -2398,6 +2399,225 @@
     flushRooms();
     // Dated, so a folder of exports reads as a history rather than pbn-map (3).json.
     downloadJSON(mapBundle(), `pbn-map_${dateStamp()}.json`);
+  }
+
+  // ------------------------------------------------- MUSH Map export (sharing)
+  //
+  // A second, deliberately lossy export in the format the public MUSH Map site
+  // uses, so a map built here can be uploaded there instead of typed in by hand.
+  //
+  // The format was worked out from one small export of theirs, so everything below
+  // is either demonstrated by that sample or left alone. Their `areas`, `spaces`,
+  // `transitLines` and `traits` collections were all empty in it, which means their
+  // shape is unknown — including, annoyingly, transitLines, which is the one place
+  // our train data would have fitted. Those go out empty rather than guessed at.
+  //
+  // Two things about their grid, both read off the sample and worth stating because
+  // getting either backwards silently mirrors the city:
+  //   * their y grows DOWNWARD (Kensington & E St. at y=49 exits NE to y=48), where
+  //     ours grows north, so y is flipped;
+  //   * their coordinates are positive, so the map is shifted into positive space.
+  // Relative geometry is preserved exactly either way, which is the point of a map.
+  const MUSH_VERSION = 3;
+  const MUSH_ORIGIN = 1;      // their grid's first cell
+  // Their sample never used a negative layer, but nothing in it says layers cannot
+  // be negative, and keeping street level at 0 is worth more than avoiding the
+  // question. If their site refuses the sewers, set this to 2 and they land at 0.
+  const MUSH_Z_OFFSET = 0;
+  const MUSH_DIR = {
+    north: 'N', northeast: 'NE', east: 'E', southeast: 'SE',
+    south: 'S', southwest: 'SW', west: 'W', northwest: 'NW',
+    up: 'UP', down: 'DOWN'
+  };
+  // Their palette, mapped onto what our own fills mean, so a shared map reads the
+  // same way ours does. tagLabels is their legend, so it is filled in to match.
+  const MUSH_TAG_LABELS = {
+    Slate: 'Known, not yet visited',
+    Red: '',
+    Orange: 'Haven — claimed',
+    Yellow: 'Haven site — unclaimed',
+    Green: 'Stairs one way',
+    Teal: 'Stairs up and down',
+    Blue: 'Visited',
+    Purple: '',
+    Pink: ''
+  };
+
+  // Mirrors the fill precedence on our own map: haven outranks stairs, stairs
+  // outrank plain, and an unvisited room is grey whatever else is true of it.
+  function mushColor(r) {
+    if (!r.visited) return 'Slate';
+    if (r.isHaven) return 'Orange';
+    if (r.havenClaimable) return 'Yellow';
+    const hasUp = (r.exits || []).some((e) => e.direction === 'up');
+    const hasDown = (r.exits || []).some((e) => e.direction === 'down');
+    if (hasUp && hasDown) return 'Teal';
+    if (hasUp || hasDown) return 'Green';
+    return 'Blue';
+  }
+
+  // Their rooms carry a free-text description and ours carry structure. This is the
+  // only field the tags, features, haven status and neighbourhood survive in, so
+  // they go here rather than being dropped on the floor.
+  function mushDescription(r) {
+    const lines = [];
+    const bits = [];
+    if (r.primaryTag) bits.push(cap(r.primaryTag));
+    const inOut = r.indoor ? 'Indoor' : 'Outdoor';
+    if (cap(r.primaryTag || '') !== inOut) bits.push(inOut);
+    if (r.exposureTier) bits.push(cap(r.exposureTier));
+    if (bits.length) lines.push(bits.join(' · '));
+    if (r.features && r.features.length) lines.push('Features: ' + r.features.join(', '));
+    if (r.isHaven) lines.push('Haven — claimed' + (r.havenIsLocked ? ', locked' : ''));
+    else if (r.havenClaimable) lines.push('Haven site — unclaimed');
+    if (r.neighborhood && r.neighborhood.name) {
+      lines.push(r.neighborhood.name + (r.neighborhood.sect ? ' — ' + cap(r.neighborhood.sect) : ''));
+    }
+    if (!r.visited) lines.push('Known from a neighbouring room; not yet visited');
+    return lines.join('\n');
+  }
+
+  // Their ids look like "rms" + 11 base36 characters. Ours are derived from the room
+  // key rather than from the clock, so re-exporting the same map produces the same
+  // ids — an updated upload then lines up with the previous one instead of arriving
+  // as an entirely new set of rooms.
+  function mushId(key, taken) {
+    let h1 = 0x811c9dc5, h2 = 0x1000193;
+    for (let i = 0; i < key.length; i++) {
+      h1 = Math.imul(h1 ^ key.charCodeAt(i), 16777619) >>> 0;
+      h2 = Math.imul(h2 + key.charCodeAt(i), 2246822519) >>> 0;
+    }
+    const base = (h1.toString(36) + h2.toString(36) + '00000000000').slice(0, 11);
+    let id = 'rms' + base;
+    // Two keys hashing alike would merge two rooms into one on their site, so the
+    // clash is resolved rather than hoped away.
+    for (let n = 1; taken.has(id); n++) {
+      const suffix = String(n);
+      id = 'rms' + base.slice(0, 11 - suffix.length) + suffix;
+    }
+    taken.add(id);
+    return id;
+  }
+
+  // Where an exit leads, by the same rule the map itself draws: the server's own
+  // target id first, then compass arithmetic. The fallback is not a nicety — in a
+  // typical save it resolves four times as many exits as the ids do.
+  function mushExitTarget(r, e) {
+    if (e.targetRoomId != null) {
+      const t = rooms[idToKey[e.targetRoomId]];
+      if (isPlaced(t)) return t;
+    }
+    const off = DIR[e.direction];
+    if (!off) return null;
+    return rooms[`${r.x + off[0]},${r.y + off[1]},${r.z + off[2]}`] || null;
+  }
+
+  function buildMushMap() {
+    const all = Object.values(rooms);
+    // Their grid needs a real cell, so anything we could not place is left out, as
+    // are vehicles: a train lives on a pseudo-floor a hundred levels down and would
+    // drag the layer list with it.
+    const out = all.filter((r) =>
+      isPlaced(r) && r.z != null && r.z > VEHICLE_Z_THRESHOLD && !r.isVehicle);
+    if (!out.length) return null;
+
+    // Sorted first so a room's id depends on the map, not on object iteration order.
+    const taken = new Set();
+    const idFor = new Map();
+    out.slice().sort((a, b) => a.key.localeCompare(b.key))
+      .forEach((r) => idFor.set(r.key, mushId(r.key, taken)));
+
+    const minX = Math.min(...out.map((r) => r.x));
+    const maxY = Math.max(...out.map((r) => r.y));
+
+    const rooms_ = {};
+    let exitsOut = 0, noBearing = 0, unresolved = 0;
+    for (const r of out) {
+      const exits = {};
+      for (const e of (r.exits || [])) {
+        const dir = MUSH_DIR[e.direction];
+        if (!dir) { noBearing++; continue; }     // "passage 1" carries no heading to give
+        const t = mushExitTarget(r, e);
+        if (!t || !idFor.has(t.key)) { unresolved++; continue; }
+        exits[dir] = idFor.get(t.key);
+        exitsOut++;
+      }
+      const id = idFor.get(r.key);
+      rooms_[id] = {
+        id,
+        name: r.name || r.key,
+        description: mushDescription(r),
+        color: mushColor(r),
+        size: 'medium',
+        x: r.x - minX + MUSH_ORIGIN,
+        y: maxY - r.y + MUSH_ORIGIN,     // flipped: their y grows downward
+        z: r.z + MUSH_Z_OFFSET,
+        exits,
+        exitFly: {},
+        imageUrl: '',
+        traits: [],
+        space: null
+      };
+    }
+
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    const bundle = {
+      version: MUSH_VERSION,
+      partial: false,              // this is the whole map, not a selection
+      meta: {
+        title: 'Philadelphia by Night',
+        author: '',                // theirs to fill in on the site; not ours to guess
+        date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
+        rooms: out.length
+      },
+      rooms: rooms_,
+      areas: [],
+      spaces: [],
+      transitLines: [],            // shape unknown — see the note above
+      tagLabels: Object.assign({}, MUSH_TAG_LABELS),
+      traits: [],
+      currentSpace: null,
+      currentLayer: MUSH_Z_OFFSET  // open on street level rather than the top floor
+    };
+    return {
+      bundle,
+      report: {
+        exported: out.length,
+        skipped: all.length - out.length,
+        exits: exitsOut,
+        noBearing,
+        unresolved,
+        grid: [Math.max(...out.map((r) => r.x)) - minX + 1,
+          maxY - Math.min(...out.map((r) => r.y)) + 1],
+        layers: [...new Set(out.map((r) => r.z + MUSH_Z_OFFSET))].sort((a, b) => a - b)
+      }
+    };
+  }
+
+  function exportMushMap() {
+    flushRooms();
+    const built = buildMushMap();
+    if (!built) {
+      alert('Nothing to export yet — no rooms have been placed on the grid.');
+      return;
+    }
+    const { bundle, report } = built;
+    const lost = report.noBearing + report.unresolved;
+    const summary = `Export ${report.exported} rooms and ${report.exits} exits `
+      + `to MUSH Map format?\n\n`
+      + `Grid: ${report.grid[0]} x ${report.grid[1]} cells, layers `
+      + `${report.layers[0]} to ${report.layers[report.layers.length - 1]}.\n\n`
+      + `Left out:\n`
+      + `  ${report.skipped} room(s) with no grid position, or vehicles\n`
+      + `  ${report.noBearing} exit(s) with no compass bearing ("passage 1" and friends)\n`
+      + `  ${report.unresolved} exit(s) whose destination is not in the map\n\n`
+      + `Their format has no room for transit lines, areas or our room tags, so the `
+      + `train data is dropped and the tags are written into each room's `
+      + `description instead.`;
+    if (!confirm(summary)) return;
+    downloadJSON(bundle, `mush-map_${dateStamp()}.json`);
+    logEvent('ui', 'exported MUSH Map format', report);
   }
 
   function mergeRoom(existing, incoming) {
