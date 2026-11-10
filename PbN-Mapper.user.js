@@ -2,13 +2,19 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.10.0
+// @version      3.10.1
 // @match        https://philadelphiabynight.net/play*
 // @downloadURL  https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
 // @updateURL    https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
+
+/* Trailing comments in this file are column-aligned on purpose, which trips ESLint's
+   no-multi-spaces rule in Tampermonkey's editor. The warning is cosmetic; the
+   alignment is deliberate. */
+/* eslint no-multi-spaces: ["error", { "ignoreEOLComments": true }] */
+
 (function () {
   'use strict';
 
@@ -19,7 +25,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
-  const SCRIPT_VERSION = '3.10.0';
+  const SCRIPT_VERSION = '3.10.1';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now

@@ -8,6 +8,16 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 3.10.1 — 2026-11-09
+
+No behaviour change. Tampermonkey's built-in ESLint flags `no-multi-spaces` on this
+file's column-aligned trailing comments, which looks like a defect when you first
+paste the script in. The rule is now configured with `ignoreEOLComments` at the top
+of the file, so alignment is allowed but genuine stray double-spaces in code are
+still caught. The alignment itself is unchanged.
+
+---
+
 ## 3.10.0 — 2026-11-09
 
 The MUSH Map site turned out to be [open
