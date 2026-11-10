@@ -2,7 +2,7 @@
 // @name         PbN Mapper
 // @namespace    https://philadelphiabynight.net/
 // @description  Auto-maps rooms, exits, havens and transit lines while you play Philadelphia by Night.
-// @version      3.9.0
+// @version      3.10.0
 // @match        https://philadelphiabynight.net/play*
 // @downloadURL  https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
 // @updateURL    https://raw.githubusercontent.com/Vargess/PhillyByNight/main/PbN-Mapper.user.js
@@ -19,7 +19,7 @@
   const VIEW_KEY = 'pbn_mapper_view_v1';
   const SCHEMA_KEY = 'pbn_mapper_schema';
   const SCHEMA_VERSION = 3;
-  const SCRIPT_VERSION = '3.9.0';
+  const SCRIPT_VERSION = '3.10.0';
 
   const CELL = 30;
   // Anchoring merged the old pseudo-floors into the real ones, so a single floor can now
@@ -463,6 +463,15 @@
   // ---------------------------------------------------------------- helpers
 
   const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+  // The server sends features as { id, label } records, not strings, so joining the
+  // array straight into a line printed "[object Object]" wherever a room had one.
+  // Older saves may still hold plain strings, so both shapes are accepted.
+  function featureNames(r) {
+    return (Array.isArray(r && r.features) ? r.features : [])
+      .map((f) => (typeof f === 'string' ? f : (f && (f.label || f.name || f.id)) || ''))
+      .filter(Boolean);
+  }
   const gridKey = (x, y, z) => `${x},${y},${z}`;
   const parseIdKey = (key) => {
     const m = ID_KEY_RE.exec(key || '');
@@ -2287,7 +2296,7 @@
     if (cap(r.primaryTag || '') !== inOut) bits.push(inOut);   // "Indoor · Indoor" reads badly
     if (r.exposureTier) bits.push(cap(r.exposureTier));
     lines.push(bits.join(' · '));
-    if (r.features && r.features.length) lines.push('Features: ' + r.features.join(', '));
+    if (featureNames(r).length) lines.push('Features: ' + featureNames(r).join(', '));
     if (r.isHaven) {
       lines.push('Haven — claimed' + (r.havenIsLocked ? ', locked' : ', unlocked') +
         (r.havenOwnerId != null ? ` (owner #${r.havenOwnerId})` : ''));
@@ -2406,23 +2415,20 @@
   // A second, deliberately lossy export in the format the public MUSH Map site
   // uses, so a map built here can be uploaded there instead of typed in by hand.
   //
-  // The format was worked out from one small export of theirs, so everything below
-  // is either demonstrated by that sample or left alone. Their `areas`, `spaces`,
-  // `transitLines` and `traits` collections were all empty in it, which means their
-  // shape is unknown — including, annoyingly, transitLines, which is the one place
-  // our train data would have fitted. Those go out empty rather than guessed at.
+  // The editor is open source (github.com/StoiaCode/mush-map-editor) and the shapes
+  // below are taken from its own js/constants.js, js/model.js and js/persistence.js
+  // rather than guessed from a sample, so areas, transit lines and traits are filled
+  // in properly instead of being left empty.
   //
-  // Two things about their grid, both read off the sample and worth stating because
-  // getting either backwards silently mirrors the city:
-  //   * their y grows DOWNWARD (Kensington & E St. at y=49 exits NE to y=48), where
-  //     ours grows north, so y is flipped;
-  //   * their coordinates are positive, so the map is shifted into positive space.
-  // Relative geometry is preserved exactly either way, which is the point of a map.
+  // Things worth knowing about their grid, because getting the first one backwards
+  // silently mirrors the city:
+  //   * their y grows DOWNWARD (VEC.N is [0,-1]) where ours grows north, so y flips;
+  //   * the grid is 1000x1000 and clamped, so the map is placed around its centre,
+  //     which is also where their editor opens a new map;
+  //   * their layers are plain integers with no floor at zero, so street level
+  //     stays 0 and the sewers stay negative.
   const MUSH_VERSION = 3;
-  const MUSH_ORIGIN = 1;      // their grid's first cell
-  // Their sample never used a negative layer, but nothing in it says layers cannot
-  // be negative, and keeping street level at 0 is worth more than avoiding the
-  // question. If their site refuses the sewers, set this to 2 and they land at 0.
+  const MUSH_GRID_N = 1000;   // constants.js: GRID_N, and x/y are clamped to 0..N-1
   const MUSH_Z_OFFSET = 0;
   const MUSH_DIR = {
     north: 'N', northeast: 'NE', east: 'E', southeast: 'SE',
@@ -2467,7 +2473,7 @@
     if (cap(r.primaryTag || '') !== inOut) bits.push(inOut);
     if (r.exposureTier) bits.push(cap(r.exposureTier));
     if (bits.length) lines.push(bits.join(' · '));
-    if (r.features && r.features.length) lines.push('Features: ' + r.features.join(', '));
+    if (featureNames(r).length) lines.push('Features: ' + featureNames(r).join(', '));
     if (r.isHaven) lines.push('Haven — claimed' + (r.havenIsLocked ? ', locked' : ''));
     else if (r.havenClaimable) lines.push('Haven site — unclaimed');
     if (r.neighborhood && r.neighborhood.name) {
@@ -2512,6 +2518,53 @@
     return rooms[`${r.x + off[0]},${r.y + off[1]},${r.z + off[2]}`] || null;
   }
 
+  // Their transit lines are an ordered list of stops, where ours are unordered pairs
+  // of station names. Walking the pairs recovers the route: start at a terminus (a
+  // station with one neighbour) and follow the chain. Anything left over — a branch,
+  // or a second disconnected run — is appended rather than dropped.
+  function orderStations(edges) {
+    const adj = new Map();
+    const link = (a, b) => { if (!adj.has(a)) adj.set(a, new Set()); adj.get(a).add(b); };
+    for (const [a, b] of edges) { if (a && b && a !== b) { link(a, b); link(b, a); } }
+    const nodes = [...adj.keys()];
+    if (!nodes.length) return [];
+    const order = [], seen = new Set();
+    let cur = nodes.find((n) => adj.get(n).size === 1) || nodes[0];
+    while (cur && !seen.has(cur)) {
+      order.push(cur); seen.add(cur);
+      cur = [...adj.get(cur)].find((n) => !seen.has(n)) || null;
+    }
+    for (const n of nodes) if (!seen.has(n)) order.push(n);
+    return order;
+  }
+
+  // An area is a union of rectangles, so a neighbourhood of arbitrary shape is
+  // described exactly by merging its cells into horizontal runs — a handful of rects
+  // per row instead of one per room, which keeps their hit-testing cheap.
+  function rectsFromCells(cells) {
+    const byRow = new Map();
+    for (const c of cells) {
+      const [x, y] = c.split(',').map(Number);
+      if (!byRow.has(y)) byRow.set(y, []);
+      byRow.get(y).push(x);
+    }
+    const rects = [];
+    for (const [y, xs] of byRow) {
+      xs.sort((a, b) => a - b);
+      let start = xs[0], prev = xs[0];
+      for (let i = 1; i <= xs.length; i++) {
+        if (xs[i] !== prev + 1) { rects.push({ x: start, y, w: prev - start + 1, h: 1 }); start = xs[i]; }
+        prev = xs[i];
+      }
+    }
+    return rects;
+  }
+
+  // Cosmetic only — their UI lets you change any of these. Anything unrecognised gets
+  // the generic marker rather than a guess.
+  const MUSH_TRAIT_EMOJI = { 'notice board': '📋', 'public workbench': '🔧', 'schrecknet terminal': '💻' };
+  const MUSH_AREA_COLORS = ['Purple', 'Pink', 'Red', 'Yellow', 'Teal'];
+
   function buildMushMap() {
     const all = Object.values(rooms);
     // Their grid needs a real cell, so anything we could not place is left out, as
@@ -2528,7 +2581,29 @@
       .forEach((r) => idFor.set(r.key, mushId(r.key, taken)));
 
     const minX = Math.min(...out.map((r) => r.x));
+    const maxX = Math.max(...out.map((r) => r.x));
+    const minY = Math.min(...out.map((r) => r.y));
     const maxY = Math.max(...out.map((r) => r.y));
+    // Centred on the grid, which is where their editor opens and leaves room on every
+    // side. Clamped regardless, because they clamp on import and a silently moved room
+    // would land on top of its neighbour.
+    const originX = Math.round(MUSH_GRID_N / 2 - (maxX - minX) / 2);
+    const originY = Math.round(MUSH_GRID_N / 2 - (maxY - minY) / 2);
+    const cell = (v) => Math.max(0, Math.min(MUSH_GRID_N - 1, v));
+    const toX = (x) => cell(x - minX + originX);
+    const toY = (y) => cell(maxY - y + originY);   // flipped: their y grows downward
+
+    // Traits: their open-ended per-room markers, which is where our room features fit.
+    const traitFor = new Map();
+    const traits = [];
+    for (const r of out) {
+      for (const label of featureNames(r)) {
+        if (traitFor.has(label)) continue;
+        const id = mushId('trait:' + label, taken);
+        traitFor.set(label, id);
+        traits.push({ id, emoji: MUSH_TRAIT_EMOJI[label.toLowerCase()] || '✨', label });
+      }
+    }
 
     const rooms_ = {};
     let exitsOut = 0, noBearing = 0, unresolved = 0;
@@ -2549,16 +2624,49 @@
         description: mushDescription(r),
         color: mushColor(r),
         size: 'medium',
-        x: r.x - minX + MUSH_ORIGIN,
-        y: maxY - r.y + MUSH_ORIGIN,     // flipped: their y grows downward
+        x: toX(r.x),
+        y: toY(r.y),
         z: r.z + MUSH_Z_OFFSET,
         exits,
         exitFly: {},
         imageUrl: '',
-        traits: [],
+        traits: featureNames(r).map((l) => traitFor.get(l)).filter(Boolean),
         space: null
       };
     }
+
+    // Areas: one per neighbourhood, described exactly by merging its cells into runs.
+    // Theirs span every layer, which is right here — the sewers under Kensington are
+    // still Kensington.
+    const byHood = new Map();
+    for (const r of out) {
+      const name = r.neighborhood && r.neighborhood.name;
+      if (!name) continue;
+      if (!byHood.has(name)) byHood.set(name, new Set());
+      byHood.get(name).add(toX(r.x) + ',' + toY(r.y));
+    }
+    const areas = [...byHood.keys()].sort().map((name, i) => ({
+      id: mushId('area:' + name, taken),
+      name,
+      color: MUSH_AREA_COLORS[i % MUSH_AREA_COLORS.length],
+      space: null,
+      rects: rectsFromCells(byHood.get(name))
+    }));
+
+    // Transit lines: ours are unordered name pairs, theirs an ordered run of stops.
+    // A station we have no room for becomes one of their "stub" stops rather than
+    // vanishing, which is exactly what stubs are for.
+    const byName = new Map();
+    for (const r of out) if (r.name && !byName.has(r.name)) byName.set(r.name, idFor.get(r.key));
+    let stubStops = 0;
+    const transitLines = Object.entries(transitEdges || {}).map(([name, edges]) => {
+      const stations = orderStations(edges || []).map((st) => {
+        if (byName.has(st)) return byName.get(st);
+        stubStops++;
+        return { stub: true, id: mushId('stub:' + name + ':' + st, taken), name: st };
+      });
+      return { id: mushId('line:' + name, taken), name, color: 'Teal', stations, loop: false };
+    }).filter((l) => l.stations.length >= 2);   // their own exporter's threshold
 
     const d = new Date();
     const p = (n) => String(n).padStart(2, '0');
@@ -2572,11 +2680,11 @@
         rooms: out.length
       },
       rooms: rooms_,
-      areas: [],
+      areas,
       spaces: [],
-      transitLines: [],            // shape unknown — see the note above
+      transitLines,
       tagLabels: Object.assign({}, MUSH_TAG_LABELS),
-      traits: [],
+      traits,
       currentSpace: null,
       currentLayer: MUSH_Z_OFFSET  // open on street level rather than the top floor
     };
@@ -2588,8 +2696,12 @@
         exits: exitsOut,
         noBearing,
         unresolved,
-        grid: [Math.max(...out.map((r) => r.x)) - minX + 1,
-          maxY - Math.min(...out.map((r) => r.y)) + 1],
+        areas: areas.length,
+        traits: traits.length,
+        lines: transitLines.length,
+        stations: transitLines.reduce((n, l) => n + l.stations.length, 0),
+        stubStops,
+        grid: [maxX - minX + 1, maxY - minY + 1],
         layers: [...new Set(out.map((r) => r.z + MUSH_Z_OFFSET))].sort((a, b) => a - b)
       }
     };
@@ -2603,18 +2715,20 @@
       return;
     }
     const { bundle, report } = built;
-    const lost = report.noBearing + report.unresolved;
-    const summary = `Export ${report.exported} rooms and ${report.exits} exits `
-      + `to MUSH Map format?\n\n`
+    const summary = `Export to MUSH Map format?\n\n`
+      + `  ${report.exported} rooms, ${report.exits} exits\n`
+      + `  ${report.areas} area(s) from neighbourhoods\n`
+      + `  ${report.lines} transit line(s), ${report.stations} stops`
+      + (report.stubStops ? ` (${report.stubStops} not mapped, kept as stubs)` : '') + `\n`
+      + `  ${report.traits} trait(s) from room features\n\n`
       + `Grid: ${report.grid[0]} x ${report.grid[1]} cells, layers `
       + `${report.layers[0]} to ${report.layers[report.layers.length - 1]}.\n\n`
       + `Left out:\n`
       + `  ${report.skipped} room(s) with no grid position, or vehicles\n`
       + `  ${report.noBearing} exit(s) with no compass bearing ("passage 1" and friends)\n`
       + `  ${report.unresolved} exit(s) whose destination is not in the map\n\n`
-      + `Their format has no room for transit lines, areas or our room tags, so the `
-      + `train data is dropped and the tags are written into each room's `
-      + `description instead.`;
+      + `Room tags, exposure and haven status have nowhere of their own to go, so `
+      + `they are written into each room's description.`;
     if (!confirm(summary)) return;
     downloadJSON(bundle, `mush-map_${dateStamp()}.json`);
     logEvent('ui', 'exported MUSH Map format', report);

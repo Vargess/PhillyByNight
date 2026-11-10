@@ -237,37 +237,42 @@ panel, not just a shortcut.
 
 ## Sharing to MUSH Map
 
-There is a public MUSH Map site for the game that otherwise wants every room typed
-in by hand. **`⋯` → Export for MUSH Map (sharing)…** converts the whole map into its
-JSON format and writes `mush-map_YYYYMMDD.json`, ready to upload. It shows you what
-will and won't make the trip and waits for you to confirm before writing anything.
-
-It is a one-way, lossy conversion — their format is simpler than ours:
+[MUSH Map](https://map.stoia.red/) is a public map editor for the game that
+otherwise wants every room typed in by hand. **`⋯` → Export for MUSH Map
+(sharing)…** converts the whole map into its JSON and writes
+`mush-map_YYYYMMDD.json`, ready to import there. It shows you what will and won't
+make the trip and waits for you to confirm before writing anything.
 
 | What | What happens |
 | --- | --- |
 | Rooms, names, positions, layers | Carried over exactly, relative geometry preserved |
 | Exits | Carried over wherever they have a compass bearing |
-| Tags, exposure, features, haven status, neighbourhood | Written into each room's **description**, the only field they survive in |
+| Neighbourhoods | Become their **areas**, shaped exactly rather than boxed off |
+| Transit lines | Become their **transit lines**, in route order; a station with no room becomes one of their "stub" stops |
+| Room features | Become their **traits**, with an emoji marker each |
 | Room colour | Mapped onto their palette, with their colour legend filled in to match |
-| Transit lines | **Dropped** — their `transitLines` was empty in the sample, so its shape is unknown |
+| Tags, exposure, haven status | Written into each room's **description**, the only field they survive in |
 | Sewer "passage 1" exits | **Dropped** — they carry no compass bearing to translate |
 | Vehicles, unplaced rooms | **Dropped** — their grid needs a real cell |
 
-On a 634-room map that comes to 631 rooms and 1,133 exits out, with 173 bearingless
-passages and 36 exits to rooms that aren't in the map left behind.
+On a 634-room map that comes to 631 rooms, 1,133 exits, 5 areas, 1 transit line and
+3 traits, with 173 bearingless passages and 36 exits to rooms that aren't in the map
+left behind.
+
+The conversion follows [their editor's own
+source](https://github.com/StoiaCode/mush-map-editor) rather than guesswork: their
+grid is 1000×1000 with coordinates clamped to it, **their y axis grows downward**
+where ours grows north, and their layers are plain integers with no floor at zero.
+So the map is flipped vertically, placed around the centre of their grid (where
+their editor opens), and keeps street level at `0` with the sewers at `-1`/`-2`.
 
 Room ids are derived from the room's own key rather than from the clock, so
-exporting the same map twice produces identical files — re-uploading an updated map
-lines the rooms up with the previous version instead of arriving as a fresh set.
+exporting the same map twice produces an identical file. Importing with **Replace**
+keeps those ids; their **Merge** reassigns them, which is their behaviour, not ours.
 
-Two details were read off their sample rather than documented anywhere: **their y
-axis grows downward** where ours grows north (so the map is flipped on export), and
-their coordinates are positive (so it is shifted into positive space). Both were
-verified against their own file. Their sample never used a negative layer either;
-ours keeps street level at `0` and puts the sewers at `-1`/`-2`. If their site turns
-out to refuse negative layers, `MUSH_Z_OFFSET` near the top of the export section
-shifts everything up — set it to `2`.
+This was tested by running their editor locally and importing the full map into it:
+all 631 rooms, 1,133 exits and 130 vertical links survive their own `normalize()`
+with the geometry intact, and the areas, transit line and traits all come through.
 
 ---
 

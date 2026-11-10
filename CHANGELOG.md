@@ -8,6 +8,54 @@ work done over several days, the dates are given per item.
 
 ---
 
+## 3.10.0 — 2026-11-09
+
+The MUSH Map site turned out to be [open
+source](https://github.com/StoiaCode/mush-map-editor), so 3.9.0's export — written
+against a single 7-room sample — was rebuilt against their actual schema and tested
+by running their editor locally and importing the whole map into it.
+
+### Fixed
+- **`features` are `{ id, label }` records, not strings.** Joining the array printed
+  `[object Object]` in the mapper's hover card and in the viewer's details panel, and
+  two of the viewer's predicates — `isTransitStation` and `hasResource` — tested a
+  regex against the object and so could never match. All four now read the label.
+  (12 rooms in the author's map carry features, so this was quietly wrong throughout.)
+
+### Added
+- **Neighbourhoods become their areas.** Their areas are a union of rectangles, so
+  each neighbourhood is described exactly by merging its cells into horizontal runs
+  rather than boxed off with a bounding rectangle — 128 rects for 5 neighbourhoods
+  over 549 rooms. Theirs span every layer, which is right: the sewers under
+  Kensington are still Kensington.
+- **Transit lines become their transit lines.** Ours are unordered pairs of station
+  names, theirs an ordered run of stops, so the pairs are walked from a terminus to
+  recover the route. A station with no room of its own becomes one of their `stub`
+  stops instead of vanishing.
+- **Room features become their traits**, their open-ended per-room markers, with an
+  emoji each.
+
+### Changed
+- The map is now placed around the centre of their 1000×1000 grid, which is where
+  their editor opens a new map, instead of in the corner. Coordinates are clamped to
+  the grid, because they clamp on import and a silently moved room would land on top
+  of its neighbour.
+- Their layers are plain integers with no floor at zero — confirmed in their source —
+  so street level stays `0` and the sewers stay negative. `MUSH_Z_OFFSET` is kept as
+  the escape hatch but is no longer expected to be needed.
+- The claim that re-uploading "lines up with the previous one" was only ever true of
+  their **Replace** path; their **Merge** reassigns every id on import. Corrected in
+  the README.
+
+### Verified against their editor
+Running their code locally and importing the full file: 631 rooms over layers −2 to
+3, 1,133 exits and 130 vertical links all survive their `normalize()` with the
+geometry assertion passing on every one; 5 areas, 1 transit line (11 real stops plus
+1 stub) and 3 traits on 12 rooms come through with no dangling references; all
+coordinates land inside the grid at 433–568 × 385–616.
+
+---
+
 ## 3.9.0 — 2026-11-09
 
 ### Added

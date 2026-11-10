@@ -612,12 +612,20 @@ const COMPASS = {
 // Most room tags are too superficial to justify their own color. The handful
 // of attributes that actually matter when skimming the map get highlighted;
 // everything else stays a muted neutral.
+// The server sends features as { id, label } records, not strings. Matching a regex
+// against the object tested "[object Object]", so the two predicates below never
+// fired and the details panel printed that string verbatim. Older saves may still
+// hold plain strings, so both shapes are accepted.
+function featureNames(r) {
+  return (Array.isArray(r && r.features) ? r.features : [])
+    .map((f) => (typeof f === 'string' ? f : (f && (f.label || f.name || f.id)) || ''))
+    .filter(Boolean);
+}
 function isTransitStation(r) {
   if (r.isVehicle) return true;
   const t = r.primaryTag || '';
   if (/^(transit|station|train|subway|platform)$/i.test(t)) return true;
-  if (Array.isArray(r.features) && r.features.some((f) =>
-    /transit|station|train|subway|platform/i.test(f))) return true;
+  if (featureNames(r).some((f) => /transit|station|train|subway|platform/i.test(f))) return true;
   return false;
 }
 function hasVerticalExit(r) {
@@ -629,7 +637,7 @@ function hasLockableExit(r) {
     (e) => e.locked || e.broken);
 }
 function hasResource(r) {
-  return Array.isArray(r.features) && r.features.some(
+  return featureNames(r).some(
     (f) => /resource|bench|craft|forge|workshop|loom|study|library/i.test(f));
 }
 // ---------------------------------------------------------------------------
@@ -2433,8 +2441,8 @@ function renderDetails() {
     html.push(`<tr><td>Neighborhood</td><td><span class="tag-swatch" style="background:${colorFor('neighborhood', nb.name || 'unknown')}"></span>${escapeHtml(nb.name)}${nb.sect ? ' <span class="badge">' + escapeHtml(nb.sect) + '</span>' : ''}</td></tr>`);
   }
   html.push(`<tr><td>Indoor</td><td>${r.indoor ? 'yes' : 'no'}</td></tr>`);
-  if (r.features && r.features.length) {
-    html.push(`<tr><td>Features</td><td>${r.features.map((f) => '<span class="tag-swatch" style="background:' + featureColor(r) + '"></span><code>' + escapeHtml(f) + '</code>').join(' ')}</td></tr>`);
+  if (featureNames(r).length) {
+    html.push(`<tr><td>Features</td><td>${featureNames(r).map((f) => '<span class="tag-swatch" style="background:' + featureColor(r) + '"></span><code>' + escapeHtml(f) + '</code>').join(' ')}</td></tr>`);
   }
   html.push(`<tr><td>Haven</td><td>${r.isHaven ? ('yes' + (r.havenIsLocked ? ' (locked)' : '') + (r.havenOwnerId != null ? ' · owner id ' + r.havenOwnerId : '')) : 'no'}</td></tr>`);
   html.push(`<tr><td>Claimable</td><td>${r.havenClaimable ? 'yes' : 'no'}</td></tr>`);
