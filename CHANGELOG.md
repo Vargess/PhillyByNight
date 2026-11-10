@@ -8,6 +8,29 @@ work done over several days, the dates are given per item.
 
 ---
 
+## Viewer — 2026-11-09
+
+`map-viewer.html` only. The userscript is unchanged, so `@version` stays at 3.10.1.
+
+### Added
+- **MUSH Map export in the viewer**, as a **⤴ MUSH Map** toolbar button. The
+  exporter from the userscript, ported onto the viewer's room records.
+
+  It is here because merging is the viewer's job and sharing was the mapper's, and
+  the two did not meet: a map combined from two players had to be pushed back
+  through Tampermonkey — loading someone else's map over your own live game state —
+  before it could be shared.
+
+  The report is shown in the viewer's own modal rather than a `confirm()`, listing
+  rooms, exits, areas, lines, stops, traits, grid and layers, and what was left
+  behind, with nothing written until **Save MUSH Map file…** is pressed.
+
+  Because room ids are derived from the room key rather than the clock, the two
+  exporters produce the **same file byte for byte** from the same map; this is
+  checked by diffing one against the other rather than assumed.
+
+---
+
 ## 3.10.1 — 2026-11-09
 
 No behaviour change. Tampermonkey's built-in ESLint flags `no-multi-spaces` on this

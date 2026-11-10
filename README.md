@@ -15,7 +15,7 @@ It runs only on `https://philadelphiabynight.net/play*`.
 | File | What it is |
 | --- | --- |
 | `PbN-Mapper.user.js` | The userscript. This is the thing you install. |
-| `map-viewer.html` | A standalone offline viewer for an exported map file. Open it in any browser and drag a JSON onto it. It draws rooms and exits exactly as the mapper does, and adds filtering, search, alternative colouring schemes and [merging](#merging-maps) for picking the map apart. |
+| `map-viewer.html` | A standalone offline viewer for an exported map file. Open it in any browser and drag a JSON onto it. It draws rooms and exits exactly as the mapper does, and adds filtering, search, alternative colouring schemes, [merging](#merging-maps) for combining several exports, and [export to MUSH Map](#sharing-to-mush-map) for sharing the result. |
 
 ---
 
@@ -238,10 +238,20 @@ panel, not just a shortcut.
 ## Sharing to MUSH Map
 
 [MUSH Map](https://map.stoia.red/) is a public map editor for the game that
-otherwise wants every room typed in by hand. **`⋯` → Export for MUSH Map
-(sharing)…** converts the whole map into its JSON and writes
-`mush-map_YYYYMMDD.json`, ready to import there. It shows you what will and won't
-make the trip and waits for you to confirm before writing anything.
+otherwise wants every room typed in by hand. The export converts the whole map
+into its JSON and writes `mush-map_YYYYMMDD.json`, ready to import there. It shows
+you what will and won't make the trip and waits for you to confirm before writing
+anything.
+
+It is in **both** tools and produces the same file from the same map:
+
+- in the mapper, **`⋯` → Export for MUSH Map (sharing)…**
+- in the viewer, the **⤴ MUSH Map** button
+
+The viewer has it because merging is the viewer's job and sharing was the mapper's,
+and the two didn't meet: a map combined from two players had to be pushed back
+through Tampermonkey — loading someone else's map over your own live game state —
+before it could be shared. Now it goes straight out.
 
 | What | What happens |
 | --- | --- |
@@ -267,12 +277,15 @@ So the map is flipped vertically, placed around the centre of their grid (where
 their editor opens), and keeps street level at `0` with the sewers at `-1`/`-2`.
 
 Room ids are derived from the room's own key rather than from the clock, so
-exporting the same map twice produces an identical file. Importing with **Replace**
-keeps those ids; their **Merge** reassigns them, which is their behaviour, not ours.
+exporting the same map twice produces an identical file — and so does exporting it
+from the viewer instead of the mapper, which is checked by diffing the two.
+Importing with **Replace** keeps those ids; their **Merge** reassigns them, which is
+their behaviour, not ours.
 
 This was tested by running their editor locally and importing the full map into it:
-all 631 rooms, 1,133 exits and 130 vertical links survive their own `normalize()`
-with the geometry intact, and the areas, transit line and traits all come through.
+all 631 rooms and 1,133 exits — 130 of them vertical — survive their own
+`normalize()` with the geometry intact, and the areas, transit line and traits all
+come through.
 
 ---
 
@@ -308,6 +321,10 @@ Nothing is written to disk until you press **Save merged map…**, which writes
 `pbn-map_merged_YYYYMMDD.json`. That file loads in the viewer and imports into the
 mapper through *Import map JSON…* like any other export. Your original files are
 never modified.
+
+A merged map can also go straight out to the sharing format with **⤴ MUSH Map** —
+see [Sharing to MUSH Map](#sharing-to-mush-map) — without going back through
+Tampermonkey first.
 
 ---
 
