@@ -833,6 +833,9 @@ async function loadFile(file) {
   try {
     const text = await file.text();
     const data = JSON.parse(text);
+    // A file from the MUSH Map site is recognised on sight and converted, rather
+    // than needing a button of its own or failing with "no rooms found".
+    if (looksLikeMushMap(data)) { importMushMap(data, file.name); return; }
     ingest(data, file.name);
   } catch (err) {
     alert('Failed to load JSON: ' + err.message);
@@ -929,8 +932,17 @@ function pickRoom(existing, incoming) {
 // Same key, demonstrably different room. Worth saying out loud: the merge keeps
 // one of the two and the other is gone, which is exactly the case where a silent
 // merge would quietly lose a room the user had walked.
+// Ids at or above MUSH_IMPORT_ID_BASE were invented by the MUSH Map importer to
+// give its exits something to point at. They are not the game's ids, so two rooms
+// are not different just because one of them carries one — without this, merging a
+// converted map reported a conflict on every cell the game had given a real id to.
+function gameId(v) {
+  return (typeof v === 'number' && v < MUSH_IMPORT_ID_BASE) ? v : null;
+}
+
 function roomsDisagree(a, b) {
-  if (a.id != null && b.id != null && a.id !== b.id) return true;
+  const ia = gameId(a.id), ib = gameId(b.id);
+  if (ia != null && ib != null && ia !== ib) return true;
   if (a.name && b.name && a.name !== b.name) return true;
   return false;
 }
@@ -1030,7 +1042,15 @@ async function mergeFiles(fileList) {
   const failed = [];
   for (const f of files) {
     try {
-      const bundle = bundleOf(JSON.parse(await f.text()));
+      const parsed = JSON.parse(await f.text());
+      if (looksLikeMushMap(parsed)) {
+        // Converting one of these needs an alignment decision and a report, which
+        // a merge of several files has no room for. Say so instead of failing with
+        // "no rooms found", which would be true but useless.
+        failed.push(f.name + ' — a MUSH Map file; load it on its own to convert it first');
+        continue;
+      }
+      const bundle = bundleOf(parsed);
       if (!Object.keys(bundle.rooms).length) {
         failed.push(f.name + ' — no rooms found in it');
         continue;
@@ -1074,6 +1094,439 @@ async function mergeFiles(fileList) {
 function bundleToRaw(b) {
   return { rooms: b.rooms, transitEdges: b.transit, floorLabels: b.floorLabels };
 }
+
+// ======================================================= MUSH Map import
+//
+// The reverse of the exporter further down: a file from the MUSH Map site turned
+// back into our own format, so a map drawn by hand there can be brought in here,
+// merged with your own, and saved for the userscript's *Import map JSON…*.
+//
+// This lives only in the viewer, on purpose. The userscript has no importer for
+// their format and should not get one: it would mean dropping someone else's
+// hand-drawn map straight into your live game state.
+//
+// Two things make this more than reversing the arithmetic.
+//
+// Their site reassigns every room id when a map is imported into it — all 719 ids
+// in the round-trip test were new — so ids cannot line a returning map up with the
+// one it came from. Coordinates *do* survive untouched, so the alignment is
+// recovered from room names instead: match rooms that are uniquely named on both
+// sides, and take the offset the most of them agree on.
+//
+// And our exporter writes tags, exposure, haven status and neighbourhood into the
+// free-text description, because their format has nowhere else to put them. Those
+// lines are read back only when they match what we wrote; anything else is left
+// alone, so a hand-written description is never mistaken for structure.
+const MUSH_TO_DIRECTION = {
+  N: 'north', NE: 'northeast', E: 'east', SE: 'southeast',
+  S: 'south', SW: 'southwest', W: 'west', NW: 'northwest',
+  UP: 'up', DOWN: 'down'
+};
+// Only these are accepted back out of a description, so free text cannot invent a
+// tier or a sect that the game never uses.
+const MUSH_EXPOSURE_WORDS = new Set(['public', 'semi-public', 'private', 'secluded', 'underground']);
+const MUSH_SECT_WORDS = new Set(['anarch', 'camarilla', 'independent', 'none', 'sabbat']);
+// Their ids are opaque strings; ours are the numbers the game hands out. Imported
+// rooms need numbers of their own for exits to point at, and these must not collide
+// with real ones — the live map's ids run to about 1,200.
+const MUSH_IMPORT_ID_BASE = 2000000;
+
+// Their files key rooms by an opaque id and hold exits as a direction map; ours key
+// by "x,y,z" and hold exits as an array. That difference is enough to tell them
+// apart without asking.
+function looksLikeMushMap(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+  if (!data.rooms || typeof data.rooms !== 'object' || Array.isArray(data.rooms)) return false;
+  const vals = Object.values(data.rooms);
+  if (!vals.length) return false;
+  const s = vals[0];
+  const theirRoom = s && typeof s === 'object'
+    && typeof s.id === 'string'
+    && s.exits && typeof s.exits === 'object' && !Array.isArray(s.exits);
+  const theirFile = typeof data.version === 'number' || !!data.tagLabels || !!data.transitLines;
+  return !!(theirRoom && theirFile);
+}
+
+// Read back only what our own exporter wrote. Every branch has to match a shape we
+// produce, so an unrecognised line contributes nothing rather than a bad guess.
+function parseMushDescription(desc, areaNames) {
+  const out = { parsed: false };
+  const lines = String(desc || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (/^Features:\s*/i.test(line)) {
+      out.featureLabels = line.replace(/^Features:\s*/i, '').split(',')
+        .map((s) => s.trim()).filter(Boolean);
+      out.parsed = true;
+      continue;
+    }
+    if (/^Haven\s+[—–-]\s*claimed/i.test(line)) {
+      out.isHaven = true;
+      out.havenIsLocked = /,\s*locked/i.test(line);
+      out.parsed = true;
+      continue;
+    }
+    if (/^Haven site\s+[—–-]\s*unclaimed/i.test(line)) {
+      out.havenClaimable = true;
+      out.parsed = true;
+      continue;
+    }
+    if (/not yet visited/i.test(line)) { out.visited = false; out.parsed = true; continue; }
+    if (line.includes(' · ')) {
+      // "Restaurant · Indoor · Semi-public", in that order, any part optional.
+      const toks = line.split(' · ').map((s) => s.trim()).filter(Boolean);
+      const i = toks.findIndex((t) => /^(Indoor|Outdoor)$/i.test(t));
+      if (i >= 0) {
+        out.indoor = /^indoor$/i.test(toks[i]);
+        // A room whose own tag is "indoor"/"outdoor" was written as that one word,
+        // so a leading token is a tag and a lone one is unrecoverable either way.
+        if (i > 0) out.primaryTag = toks[i - 1].toLowerCase();
+        const after = toks[i + 1];
+        if (after && MUSH_EXPOSURE_WORDS.has(after.toLowerCase())) {
+          out.exposureTier = after.toLowerCase();
+        }
+        out.parsed = true;
+        continue;
+      }
+    }
+    // "Kensington / North Philly — Sabbat", or the name on its own when the room
+    // has no sect. Only accepted when the name is one of the file's own areas, so
+    // a hand-written line cannot invent a neighbourhood.
+    const m = line.match(/^(.+?)\s+[—–]\s*([A-Za-z]+)\s*$/);
+    if (m && MUSH_SECT_WORDS.has(m[2].toLowerCase()) && areaNames.has(m[1].trim())) {
+      out.hoodName = m[1].trim();
+      out.sect = m[2].toLowerCase();
+      out.parsed = true;
+      continue;
+    }
+    if (areaNames.has(line)) { out.hoodName = line; out.parsed = true; }
+  }
+  return out;
+}
+
+// Their areas are a union of rectangles spanning every layer, which is exactly how
+// our neighbourhoods behave, so a room's neighbourhood is whichever area covers it.
+function mushAreaLookup(areas) {
+  const rects = [];
+  for (const a of (areas || [])) {
+    for (const r of (a.rects || [])) {
+      if (Number.isFinite(r.x) && Number.isFinite(r.y)) {
+        rects.push({ name: a.name, x: r.x, y: r.y, w: r.w || 1, h: r.h || 1 });
+      }
+    }
+  }
+  return (tx, ty) => {
+    for (const r of rects) {
+      if (tx >= r.x && tx < r.x + r.w && ty >= r.y && ty < r.y + r.h) return r.name;
+    }
+    return null;
+  };
+}
+
+// Recover where this map belongs on our grid. Our export is a translation plus a
+// vertical flip, so the inverse is x + A and B - y for two unknown constants: one
+// confidently matched room fixes both, and the vote makes sure it was not a fluke.
+function findMushAlignment(mushRooms) {
+  if (!state.rooms.length) return { ok: false, reason: 'no map is loaded to align against' };
+  const uniqueByName = (list, nameOf, keep) => {
+    const m = new Map();
+    for (const r of list) {
+      const n = nameOf(r);
+      if (!n || !keep(r)) continue;
+      m.set(n, m.has(n) ? null : r);    // a repeated name is no anchor
+    }
+    return m;
+  };
+  const pbn = uniqueByName(state.rooms, (r) => r.name, (r) => r.placed);
+  const mush = uniqueByName(mushRooms, (r) => r.name, () => true);
+
+  const votes = new Map();
+  let considered = 0;
+  for (const [name, m] of mush) {
+    if (!m) continue;
+    const p = pbn.get(name);
+    if (!p) continue;
+    considered++;
+    const k = `${p.x - m.x},${p.y + m.y},${p.z - m.z}`;
+    votes.set(k, (votes.get(k) || 0) + 1);
+  }
+  let bestKey = null, agree = 0;
+  for (const [k, n] of votes) if (n > agree) { agree = n; bestKey = k; }
+  if (!bestKey) return { ok: false, considered, agree: 0, reason: 'no room name appears in both maps' };
+  if (agree < 5 || agree / considered < 0.6) {
+    return { ok: false, considered, agree, reason: 'the matching rooms do not agree on one position' };
+  }
+  const [A, B, dz] = bestKey.split(',').map(Number);
+  return { ok: true, A, B, dz, considered, agree };
+}
+
+function mushToPbn(data, align) {
+  const roomsIn = Object.values(data.rooms || {});
+  const usable = roomsIn.filter((r) =>
+    r && typeof r === 'object'
+    && Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.z));
+  if (!usable.length) return null;
+
+  // Without an alignment the map is simply placed at the origin: self-consistent,
+  // but unrelated to the game's real grid, which the report has to say out loud.
+  let A, B, dz;
+  if (align && align.ok) {
+    ({ A, B, dz } = align);
+  } else {
+    A = -Math.min(...usable.map((r) => r.x));
+    B = Math.max(...usable.map((r) => r.y));
+    dz = 0;
+  }
+  const toX = (x) => x + A;
+  const toY = (y) => B - y;          // their y grows downward, ours grows north
+  const toZ = (z) => z + dz;
+
+  const areaOf = mushAreaLookup(data.areas);
+  const areaNames = new Set((data.areas || []).map((a) => a.name).filter(Boolean));
+  const traitLabel = new Map((data.traits || []).map((t) => [t.id, t.label]));
+  const numericId = new Map();
+  usable.forEach((r, i) => numericId.set(r.id, MUSH_IMPORT_ID_BASE + i));
+  // Their meta carries the day the file was written. Our merge rule breaks ties on
+  // lastSeen, so imported rooms need a date or they would always lose to anything
+  // already on the grid — including the rooms they were meant to correct.
+  const stamp = (() => {
+    const d = data.meta && data.meta.date;
+    const t = d ? Date.parse(d + 'T12:00:00') : NaN;
+    return Number.isFinite(t) ? t : Date.now();
+  })();
+
+  const rooms = {};
+  let exitsOut = 0, unknownDirs = 0, danglingExits = 0, collisions = 0;
+  let parsedDescriptions = 0, keptDescriptions = 0, danglingTraits = 0;
+
+  for (const r of usable) {
+    const x = toX(r.x), y = toY(r.y), z = toZ(r.z);
+    const key = `${x},${y},${z}`;
+    if (rooms[key]) { collisions++; continue; }
+
+    const d = parseMushDescription(r.description, areaNames);
+    if (d.parsed) parsedDescriptions++;
+    else if (r.description) keptDescriptions++;
+
+    const exits = [];
+    const addExit = (dirKey, target) => {
+      const direction = MUSH_TO_DIRECTION[String(dirKey).toUpperCase()];
+      if (!direction) { unknownDirs++; return; }
+      const tid = numericId.get(target);
+      if (tid == null) { danglingExits++; return; }
+      exits.push({ direction, targetRoomId: tid, broken: false, locked: false });
+      exitsOut++;
+    };
+    for (const [k, v] of Object.entries(r.exits || {})) addExit(k, v);
+    for (const [k, v] of Object.entries(r.exitFly || {})) addExit(k, v);
+
+    // Traits are structured, so they are the better source for features; the
+    // "Features:" line is the fallback for a file we did not write.
+    let features = [];
+    if (Array.isArray(r.traits) && r.traits.length) {
+      for (const t of r.traits) {
+        const label = traitLabel.get(t);
+        if (label) features.push({ id: t, label });
+        else danglingTraits++;
+      }
+    } else if (d.featureLabels) {
+      features = d.featureLabels.map((label) => ({ id: 'mush:' + label, label }));
+    }
+
+    // Their areas are flat rectangles spanning every layer, so the cell under a
+    // rooftop decides what the rooftop is "in" — which invents a neighbourhood for
+    // a room that never had one. When the description is one of ours it already
+    // says, exactly, so it wins; the areas are the fallback for a map we did not
+    // write, which is the hand-drawn case this importer exists for.
+    const hood = d.parsed ? (d.hoodName || null) : areaOf(r.x, r.y);
+    const neighborhood = hood ? { name: hood } : null;
+    if (neighborhood && d.sect) neighborhood.sect = d.sect;
+
+    // Colour is the fallback for anything the description did not carry — it is how
+    // our own exporter encoded these, and the only signal a hand-drawn map gives.
+    const colour = String(r.color || '');
+    const visited = d.visited != null ? d.visited : colour !== 'Slate';
+    const isHaven = d.isHaven != null ? d.isHaven : colour === 'Orange';
+    const claimable = d.havenClaimable != null ? d.havenClaimable : colour === 'Yellow';
+
+    rooms[key] = {
+      key,
+      id: numericId.get(r.id),
+      name: r.name || null,
+      primaryTag: d.primaryTag || null,
+      exposureTier: d.exposureTier || null,
+      indoor: d.indoor != null ? d.indoor : false,
+      features,
+      isHaven: !!isHaven,
+      havenOwnerId: null,
+      havenIsLocked: !!d.havenIsLocked,
+      havenClaimable: !!claimable,
+      isVehicle: false,
+      placement: 'grid',
+      x, y, z,
+      islandId: null,
+      positionUncertain: false,
+      exits,
+      neighborhood,
+      visited: !!visited,
+      lastSeen: stamp,
+      // Our format has no description field and the mapper drops it on import, but
+      // throwing away someone's hand-written text on the way through would be rude.
+      description: r.description || ''
+    };
+  }
+
+  // Their lines are an ordered run of stops; ours are unordered pairs of names.
+  const nameById = new Map(usable.map((r) => [r.id, r.name]));
+  const transitEdges = {};
+  let stubStops = 0, stops = 0;
+  for (const line of (data.transitLines || [])) {
+    const names = (line.stations || []).map((s) => {
+      if (typeof s === 'string') return nameById.get(s) || null;
+      if (s && s.name) { stubStops++; return s.name; }
+      return null;
+    });
+    const pairs = [];
+    for (let i = 0; i + 1 < names.length; i++) {
+      if (names[i] && names[i + 1]) pairs.push([names[i], names[i + 1]]);
+    }
+    stops += names.filter(Boolean).length;
+    if (pairs.length) transitEdges[line.name || 'Transit line'] = pairs;
+  }
+
+  const zs = [...new Set(Object.values(rooms).map((r) => r.z))].sort((a, b) => a - b);
+  return {
+    raw: { rooms, transitEdges, floorLabels: {} },
+    report: {
+      title: (data.meta && data.meta.title) || null,
+      date: (data.meta && data.meta.date) || null,
+      version: data.version,
+      partial: !!data.partial,
+      roomsIn: roomsIn.length,
+      rooms: Object.keys(rooms).length,
+      skipped: roomsIn.length - usable.length,
+      collisions,
+      exits: exitsOut,
+      unknownDirs,
+      danglingExits,
+      areas: (data.areas || []).length,
+      hoods: new Set(Object.values(rooms).map((r) => r.neighborhood && r.neighborhood.name)
+        .filter(Boolean)).size,
+      traits: (data.traits || []).length,
+      traitRooms: Object.values(rooms).filter((r) => r.features.length).length,
+      danglingTraits,
+      lines: Object.keys(transitEdges).length,
+      stops,
+      stubStops,
+      parsedDescriptions,
+      keptDescriptions,
+      layers: zs,
+      align
+    }
+  };
+}
+
+function importMushMap(data, fileName) {
+  const roomsIn = Object.values(data.rooms || {});
+  const usable = roomsIn.filter((r) =>
+    r && Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.z));
+  if (!usable.length) {
+    alert(`${fileName} looks like a MUSH Map file, but none of its rooms have a `
+      + `position on the grid, so there is nothing to bring in.`);
+    return;
+  }
+  const align = findMushAlignment(usable);
+  const built = mushToPbn(data, align);
+  if (!built) { alert(`${fileName} could not be converted.`); return; }
+  const { raw, report } = built;
+  const outName = `pbn-map_from-mush_${dateStamp()}.json`;
+
+  openModal('Import from MUSH Map', (body) => {
+    const note = document.createElement('p');
+    note.className = 'merge-note';
+    note.textContent = `${fileName}${report.title ? ` — “${report.title}”` : ''} holds `
+      + `${report.rooms} rooms and ${report.exits} exits, converted to our format. `
+      + `Nothing has been loaded or written yet.`;
+    body.appendChild(note);
+
+    // Where it landed matters more than anything else in this dialog: a map placed
+    // at an arbitrary origin looks right and merges catastrophically.
+    const al = document.createElement('div');
+    al.className = 'merge-sub' + (report.align && report.align.ok ? '' : ' merge-warn');
+    al.textContent = report.align && report.align.ok
+      ? `Aligned to the map on screen: ${report.align.agree} of ${report.align.considered} `
+        + `rooms named in both agree on the same position, so these rooms land on the `
+        + `real grid and will merge correctly.`
+      : `Not aligned — ${(report.align && report.align.reason) || 'no map to align against'}. `
+        + `The rooms keep their shape but sit at an arbitrary origin, so merging this `
+        + `into a map captured from the game would duplicate rather than match. Load `
+        + `that map first and import again to line them up.`;
+    body.appendChild(al);
+
+    const rows = [
+      ['Rooms', report.rooms],
+      ['Exits', report.exits],
+      ['Neighbourhoods from their areas', `${report.hoods} (of ${report.areas} areas)`],
+      ['Transit lines', `${report.lines}${report.stops ? `, ${report.stops} stops` : ''}`],
+      ['Features from their traits', `${report.traits} on ${report.traitRooms} rooms`],
+      ['Layers', report.layers.length ? `${report.layers[0]} to ${report.layers[report.layers.length - 1]}` : '—'],
+      ['Descriptions read as structure', report.parsedDescriptions],
+      ['File', `version ${report.version}${report.partial ? ', a partial selection' : ''}`
+        + `${report.date ? `, dated ${report.date}` : ''}`]
+    ];
+    const table = document.createElement('table');
+    for (const [k, v] of rows) {
+      const tr = document.createElement('tr');
+      const a = document.createElement('td'); a.textContent = k;
+      const b = document.createElement('td'); b.textContent = String(v);
+      tr.append(a, b);
+      table.appendChild(tr);
+    }
+    body.appendChild(table);
+
+    const problems = [
+      [report.skipped, 'room(s) with no position on their grid, skipped'],
+      [report.collisions, 'room(s) dropped for sharing a cell with another'],
+      [report.unknownDirs, 'exit(s) in a direction we have no name for'],
+      [report.danglingExits, 'exit(s) pointing at a room that is not in the file'],
+      [report.danglingTraits, 'trait reference(s) with no matching trait'],
+      [report.stubStops, 'transit stop(s) that are placeholders, not rooms'],
+      [report.keptDescriptions, 'description(s) kept as written, not read as structure']
+    ].filter(([n]) => n > 0);
+    if (problems.length) {
+      const h = document.createElement('div');
+      h.className = 'merge-sub';
+      h.textContent = 'Worth knowing';
+      body.appendChild(h);
+      const ul = document.createElement('ul');
+      ul.className = 'merge-conflicts';
+      for (const [n, what] of problems) {
+        const li = document.createElement('li');
+        li.textContent = `${n} ${what}`;
+        ul.appendChild(li);
+      }
+      body.appendChild(ul);
+    }
+
+    const foot = document.createElement('div');
+    foot.className = 'merge-sub';
+    foot.textContent = 'Their format has no room id, exposure tier or haven flag of its '
+      + 'own, so those are read back out of each room’s description where our own '
+      + 'exporter put them, and left unset otherwise. Imported rooms are dated '
+      + (report.date || 'today') + ', so they win ties against older records on merge.';
+    body.appendChild(foot);
+  }, [
+    { label: 'Save as PbN map…', primary: true, closes: false,
+      onClick: () => downloadJSON(raw, outName) },
+    { label: 'Load into viewer', onClick: () => ingest(raw, fileName + ' → PbN') },
+    ...(state.rooms.length ? [{
+      label: 'Merge into current map',
+      onClick: () => mergeFiles([new File([JSON.stringify(raw)], fileName + ' → PbN',
+        { type: 'application/json' })])
+    }] : []),
+    { label: 'Close' }
+  ]);
+}
+
 
 function dateStamp() {
   const d = new Date();
@@ -1224,8 +1677,11 @@ function showMergeReport(report, bundle, failed) {
 }
 
 function describeSide(side) {
+  // Only the game's own id means anything to a reader; an id the MUSH importer
+  // invented would just look like a room number that does not exist.
+  const id = gameId(side.id);
   return (side.name || '(unnamed)')
-    + (side.id != null ? ` #${side.id}` : '')
+    + (id != null ? ` #${id}` : '')
     + ` (${side.file})`;
 }
 

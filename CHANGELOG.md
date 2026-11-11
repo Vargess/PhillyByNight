@@ -8,6 +8,41 @@ work done over several days, the dates are given per item.
 
 ---
 
+## Viewer — 2026-11-10
+
+`map-viewer.html` only. The userscript is unchanged, so `@version` stays at 3.10.1.
+
+### Added
+- **Import from MUSH Map**, so a map drawn by hand on their site can be brought
+  into our format. Their files are recognised on sight by **📂 Load** or a drop —
+  no extra button — and converted behind a report offering *Save as PbN map…*,
+  *Load into viewer* and *Merge into current map*.
+
+  Deliberately **not** in the userscript: importing their format there would mean
+  dropping someone else's hand-drawn map into the live game state.
+
+  Their site reassigns every room id on import — all 719 in the round-trip test
+  came back new — so alignment is recovered from room **names** instead: rooms
+  named uniquely on both sides vote on one offset. With the October map loaded,
+  368 of 372 agreed and 604 of 719 rooms landed on exactly the right cell with the
+  right name. With nothing loaded there is nothing to align against, and the
+  dialog says so in amber, because an unaligned map merges by duplicating.
+
+  Round-tripping our own export through their site returns all 712 ids, positions,
+  names, exits, traits, descriptions and areas identically. The 22 colours that
+  differ are their format's limit, not a defect: stairs leading outside the
+  exported map have no exit to carry them.
+
+### Fixed
+- **Merging a converted map reported a conflict on nearly every shared cell.**
+  `roomsDisagree` treats differing room ids as proof of different rooms, and the
+  ids invented for imported exits never match the game's. Those synthetic ids are
+  now excluded from the comparison, which took the test merge from 135+ reported
+  conflicts down to the 24 rooms the game had genuinely renamed. The same id no
+  longer leaks into the conflict list as if it were a real room number.
+
+---
+
 ## Viewer — 2026-11-09
 
 `map-viewer.html` only. The userscript is unchanged, so `@version` stays at 3.10.1.

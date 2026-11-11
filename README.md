@@ -289,6 +289,69 @@ come through.
 
 ---
 
+## Bringing a MUSH Map file back
+
+Maps drawn by hand on their site can come the other way too. **This is the viewer's
+job only** — the userscript has no importer for their format and is not getting one,
+because it would mean dropping someone else's hand-drawn map straight into your live
+game state.
+
+Just open the file: **📂 Load** it or drop it on the window, and the viewer
+recognises their format on sight and offers to convert it. Nothing is loaded or
+written until you choose:
+
+| Button | What it does |
+| --- | --- |
+| **Save as PbN map…** | Writes `pbn-map_from-mush_YYYYMMDD.json`, which imports into the mapper through *Import map JSON…* like any other export |
+| **Load into viewer** | Shows the converted map here, replacing what's on screen |
+| **Merge into current map** | Combines it with the map you already have, with the usual [merge report](#merging-maps) |
+
+### The one thing worth reading
+
+Their site **reassigns every room id** when you import a map into it — all 719 in
+the round-trip test came back new — so ids cannot be used to line a returning map up
+with the one it came from. Coordinates, though, survive untouched.
+
+So the viewer works out where the map belongs by **matching room names**: rooms named
+uniquely on both sides vote on a single offset, and the dialog tells you how many
+agreed. With the October map loaded, 368 of 372 matched rooms agreed, and 604 of the
+719 imported rooms landed on exactly the right cell with exactly the right name.
+
+**If no map is loaded, there is nothing to align against**, and the dialog says so in
+amber. The rooms keep their shape but sit at an arbitrary origin, so merging that
+into a map captured from the game would duplicate everything instead of matching it.
+Load your own map first, then import.
+
+### What survives, and what cannot
+
+Their format has no room id, exposure tier, haven flag or neighbourhood field, so our
+exporter writes those into each room's description. The importer reads them back
+**only when they match what we wrote** — a hand-written description is kept as it is
+rather than being mistaken for structure.
+
+| Their side | Becomes |
+| --- | --- |
+| Rooms, names, positions, layers | Carried over exactly |
+| Exits, including up and down | Carried over, with ids invented for them to point at |
+| Areas | Neighbourhoods — but only for a file we did not write; see below |
+| Traits | Room features |
+| Transit lines | Transit links, as pairs of station names |
+| Colour | Visited and haven status, where the description doesn't say |
+| Description | Read back as structure if it is ours, kept verbatim if it is not |
+
+Areas need care: theirs are flat rectangles spanning **every** layer, so the cell
+under a rooftop would decide what the rooftop is "in". When the description is one of
+ours it already names the neighbourhood exactly, so it wins; areas are the fallback
+for a hand-drawn map, which is what this is for.
+
+Round-tripping our own export through their site and back gives **all 712 room ids,
+positions, names, exits, traits, descriptions and areas back identically**. The only
+drift is 22 room colours, and that is their format's limit rather than a bug: a room
+whose stairs lead to somewhere outside the exported map has no exit to carry them, so
+the colour is recomputed without it.
+
+---
+
 ## Merging maps
 
 `map-viewer.html` can combine several exports into one — a map from a second
